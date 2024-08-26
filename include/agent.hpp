@@ -13,6 +13,7 @@
 
 #include "common.hpp"
 #include "grid_map.hpp"
+#include <iostream>
 #include <memory>
 namespace Env
 {
@@ -41,7 +42,7 @@ struct AgentInfo
 
 struct AgentReward
 {
-  int explored_pixels;
+  int explored_pixels = 0;
 };
 
 struct AgentDone
@@ -65,6 +66,7 @@ public:
   Agent() = default;
   void reset(std::shared_ptr<GridMap> env_map, Coord pos, int id, int max_steps, int sensor_range, int num_rays)
   {
+    std::cout << "reset agent " << id << std::endl;
     info.env_map = env_map;
     info.id = id;
     info.max_steps = max_steps;
@@ -73,7 +75,12 @@ public:
     info.step_count = 0;
 
     state.frontier_points.clear();
+    std::cout << "make map" << std::endl;
     state.map = std::make_unique<GridMap>(env_map->width_, env_map->height_, UNKNOWN);
+    if (state.map == nullptr)
+    {
+      std::cout << "map is nullptr" << std::endl;
+    }
     state.executing_path = nullptr;
     state.pos = pos;
 

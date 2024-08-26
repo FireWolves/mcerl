@@ -11,6 +11,7 @@
 #pragma once
 
 #include "agent.hpp"
+#include "algorithms.hpp"
 namespace Env
 {
 
@@ -18,7 +19,8 @@ class Environment
 {
 
 public:
-  Environment(int num_agents, int max_steps, int max_steps_per_agent, int velocity);
+  Environment(int num_agents, int max_steps, int max_steps_per_agent, int velocity, int sensor_range, int num_rays,
+              int min_frontier_pixel, int max_frontier_pixel);
 
   void init(GridMap env_map, std::vector<Coord> poses);
 
@@ -39,9 +41,27 @@ public:
   {
     return *global_map_;
   }
+  GridMap agent_map(int agent_id)
+  {
+    return *agents_[agent_id].state.map;
+  }
   GridMap local_map(int agent_id)
   {
     return *agents_[agent_id].state.map;
+  }
+  GridMap test_map_update(GridMap map, GridMap map_to_update, Coord pos, int sensor_range, int num_rays)
+  {
+    Alg::map_update(std::make_shared<GridMap>(map), &map_to_update, pos, sensor_range, num_rays);
+    return map_to_update;
+  }
+
+  std::vector<FrontierPoint> test_frontier_detection(GridMap map, int min_pixels, int max_pixels, int sensor_range)
+  {
+    return Alg::frontier_detection(&map, min_pixels, max_pixels, sensor_range);
+  }
+  Path test_a_star(GridMap map, Coord start, Coord end)
+  {
+    return Alg::a_star(&map, start, end);
   }
 
 private:
@@ -55,6 +75,8 @@ private:
   int num_agents_;
   int max_steps_;
   int step_count_;
+  int min_frontier_pixel_;
+  int max_frontier_pixel_;
   int max_steps_per_agent_;
   bool is_done_ = false;
   void set_action(int agent_id, Action target_idx);

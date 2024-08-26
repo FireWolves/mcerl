@@ -30,7 +30,7 @@ test = ["pytest"]
 
 [tool.scikit-build]
 wheel.expand-macos-universal-tags = true
-
+cmake.build-type = "Debug"
 
 [tool.pytest.ini_options]
 minversion = "6.0"

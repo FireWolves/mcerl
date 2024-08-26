@@ -55,11 +55,16 @@ template <> struct type_caster<cv::Point>
 PYBIND11_MODULE(_core, env)
 {
   py::class_<Env::Environment>(env, "Environment")
-      .def(py::init<int, int, int, int>())
+      .def(py::init<int, int, int, int, int, int, int, int>())
       .def("init", &Env::Environment::init)
       .def("reset", &Env::Environment::reset)
-      .def("test_grid_map", &Env::Environment::test_grid_map)
-      .def("env_map", &Env::Environment::env_map);
+      .def("test_map_update", &Env::Environment::test_map_update)
+      .def("test_frontier_detection", &Env::Environment::test_frontier_detection)
+      .def("test_a_star", &Env::Environment::test_a_star)
+      .def("env_map", &Env::Environment::env_map)
+      .def("global_map", &Env::Environment::global_map)
+      .def("agent_map", &Env::Environment::agent_map)
+      .def("step", &Env::Environment::step);
 
   py::class_<Env::GridMap>(env, "GridMap", py::buffer_protocol())
       .def_buffer([](Env::GridMap &m) -> py::buffer_info {
@@ -94,8 +99,8 @@ PYBIND11_MODULE(_core, env)
       .def(py::init<>())
       .def_readonly("robot_id", &Env::Info::robot_id)
       .def_readonly("step_cnt", &Env::Info::step_cnt)
-      .def_readonly("exploration_rate", &Env::Info::exploration_rate)
-      .def_readonly("delta_time", &Env::Info::delta_time);
+      .def_readonly("agent_step_cnt", &Env::Info::agent_step_cnt)
+      .def_readonly("exploration_rate", &Env::Info::exploration_rate);
 
   py::class_<Env::Reward>(env, "Reward")
       .def(py::init<>())

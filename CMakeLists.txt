@@ -14,6 +14,7 @@ project(
 # scikit-build-core's built-in backport)
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(OpenCV REQUIRED)
+find_package(Boost REQUIRED)
 add_subdirectory(third-party/pybind11)
 
 include_directories(include)
@@ -21,7 +22,7 @@ file(GLOB SOURCES "src/*.cpp")
 
 python_add_library(_core MODULE ${SOURCES} WITH_SOABI)
 target_link_libraries(_core PRIVATE pybind11::headers ${OpenCV_LIBS})
-target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS})
+target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 
 # This is passing in the version as a define just as an example
 target_compile_definitions(_core PRIVATE VERSION_INFO=${PROJECT_VERSION})
