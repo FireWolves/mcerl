@@ -1,3 +1,4 @@
 build
 ray_cast
 .vscode
+logs/*
