@@ -44,7 +44,7 @@ struct FrontierPoint
 struct Observation
 {
   std::vector<FrontierPoint> frontier_points; /**< The list of frontier points in the observation. */
-  std::vector<Coord> robot_poses;             /**< The list of robot poses in the observation. */
+  std::vector<Coord> agent_poses;             /**< The list of agent poses in the observation. */
 };
 
 /**
@@ -52,7 +52,7 @@ struct Observation
  */
 struct Info
 {
-  int robot_id; /**< The ID of the robot. */
+  int agent_id; /**< The ID of the agent. */
   int step_cnt; /**< The step count in the environment. */
   int agent_step_cnt;
   float exploration_rate; /**< The exploration rate of the environment. */
@@ -65,7 +65,7 @@ struct Info
 struct Reward
 {
   int exploration_reward; /**< The exploration reward in the environment. */
-  int time_step;          /**< The time step in the environment. */
+  int time_step_reward;          /**< The time step in the environment. */
 };
 
 /**

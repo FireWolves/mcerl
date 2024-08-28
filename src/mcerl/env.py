@@ -69,34 +69,37 @@ class Env:
     def unwrap_data(self, data: tuple[Any]) -> dict[str, Any]:
         obs, reward, done, info = data  # type: ignore  # noqa: PGH003
         unwrapped_data = {}
-        unwrapped_data["robot_id"] = info.robot_id
-        unwrapped_data["step_cnt"] = info.agent_step_cnt
-        unwrapped_data["total_step_cnt"] = info.step_cnt
-        unwrapped_data["exploration_rate"] = info.exploration_rate
-        unwrapped_data["reward"] = {
-            "exploration": reward.exploration_reward,
-            "time_elapsed": info.delta_time,
+        unwrapped_data["info"] = {
+            "agent_id": info.agent_id,
+            "agent_step_cnt": info.agent_step_cnt,
+            "step_cnt": info.step_cnt,
+            "exploration_rate": info.exploration_rate,
+            "delta_time": info.delta_time,
         }
         unwrapped_data["done"] = done
-        unwrapped_data["obs"] = {
+        unwrapped_data["observation"] = {
             "frontier_points": [
                 (*frontier_point.pos, frontier_point.unexplored_pixels)
                 for frontier_point in obs.frontier_points
             ],
-            "pos": obs.robot_poses,
+            "pos": obs.agent_poses,
+        }
+        unwrapped_data["reward"] = {
+            "exploration_reward": reward.exploration_reward,
+            "time_step_reward": reward.time_step_reward,
         }
         self._last_data = unwrapped_data
         return unwrapped_data
 
     def sample(self) -> int:
-        action_space = len(self.last_data["obs"]["frontier_points"])
+        action_space = len(self.last_data["observation"]["frontier_points"])
         if action_space > 0:
             rng = np.random.default_rng()
-            return rng.integers(action_space)
+            return rng.integers(action_space).item()
         return 0
 
     def done(self) -> bool:
         return self._env.done()
 
     def random_action(self) -> tuple[int, int]:
-        return (self.last_data["robot_id"], self.sample())
+        return (self.last_data["info"]["agent_id"], self.sample())

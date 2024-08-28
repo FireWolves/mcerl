@@ -136,7 +136,7 @@ FrameData Environment::get_frame_data(int agent_id)
 {
   spdlog::info("get frame data for agent {}", agent_id);
 
-  Observation obs;
+  Observation observation;
   Reward reward;
   Done done = false;
   Info info;
@@ -144,7 +144,7 @@ FrameData Environment::get_frame_data(int agent_id)
   // assume the agent is not done
   auto &&agent = agents_[agent_id];
 
-  info.robot_id = agent.info.id;
+  info.agent_id = agent.info.id;
   info.step_cnt = step_count_;
   info.delta_time = agent.info.delta_time;
   step_count_++;
@@ -171,7 +171,7 @@ FrameData Environment::get_frame_data(int agent_id)
       valid_frontiers.push_back(frontier);
   spdlog::debug("valid frontiers size: {}", valid_frontiers.size());
   agent.state.frontier_points = valid_frontiers;
-  obs.frontier_points = valid_frontiers;
+  observation.frontier_points = valid_frontiers;
 
   if (valid_frontiers.empty())
   {
@@ -183,9 +183,9 @@ FrameData Environment::get_frame_data(int agent_id)
   spdlog::trace("getting agent poses");
   for (auto &i : agents_)
   {
-    obs.robot_poses.push_back(i.state.pos);
+    observation.agent_poses.push_back(i.state.pos);
   }
-  std::swap(obs.robot_poses[0], obs.robot_poses[agent_id]);
+  std::swap(observation.agent_poses[0], observation.agent_poses[agent_id]);
 
   spdlog::trace("merging map to global map");
   Alg::map_merge(global_map_, agent.state.map.get());
@@ -194,7 +194,7 @@ FrameData Environment::get_frame_data(int agent_id)
   auto exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
   info.exploration_rate = exploration_rate;
 
-  return std::move(std::make_tuple(obs, reward, done, info));
+  return std::move(std::make_tuple(observation, reward, done, info));
 }
 int Environment::get_next_act_agent()
 {

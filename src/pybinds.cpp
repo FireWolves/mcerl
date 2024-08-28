@@ -92,7 +92,7 @@ PYBIND11_MODULE(_core, env)
   py::class_<Env::Observation>(env, "Observation")
       .def(py::init<>())
       .def_readonly("frontier_points", &Env::Observation::frontier_points)
-      .def_readonly("robot_poses", &Env::Observation::robot_poses);
+      .def_readonly("agent_poses", &Env::Observation::agent_poses);
 
   py::class_<Env::FrontierPoint>(env, "FrontierPoint")
       .def(py::init<>())
@@ -101,7 +101,7 @@ PYBIND11_MODULE(_core, env)
 
   py::class_<Env::Info>(env, "info")
       .def(py::init<>())
-      .def_readonly("robot_id", &Env::Info::robot_id)
+      .def_readonly("agent_id", &Env::Info::agent_id)
       .def_readonly("step_cnt", &Env::Info::step_cnt)
       .def_readonly("agent_step_cnt", &Env::Info::agent_step_cnt)
       .def_readonly("delta_time", &Env::Info::delta_time)
@@ -110,7 +110,7 @@ PYBIND11_MODULE(_core, env)
   py::class_<Env::Reward>(env, "Reward")
       .def(py::init<>())
       .def_readonly("exploration_reward", &Env::Reward::exploration_reward)
-      .def_readonly("time_step", &Env::Reward::time_step);
+      .def_readonly("time_step_reward", &Env::Reward::time_step_reward);
 
 #ifdef VERSION_INFO
   env.attr("__version__") = MACRO_STRINGIFY(VERSION_INFO);
