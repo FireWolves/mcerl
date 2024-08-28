@@ -15,5 +15,6 @@ Env::Path a_star(Env::GridMap *exploration_map, Env::Coord start, Env::Coord end
 void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map);
 int calculate_new_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map);
 float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *exploration_map);
-
+bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int sensor_range,
+                       int threshold);
 } // namespace Alg

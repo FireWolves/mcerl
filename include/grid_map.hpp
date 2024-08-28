@@ -23,45 +23,7 @@ namespace Env
 
 struct GridMap
 {
-  uint8_t *data_;
-  int width_;
-  int height_;
-  int size() const
-  {
-    return width_ * height_;
-  }
-  uint8_t *data()
-  {
-    return data_;
-  }
-  int rows() const
-  {
-    return height_;
-  }
-  int cols() const
-  {
-    return width_;
-  }
-  int width() const
-  {
-    return width_;
-  }
-  int height() const
-  {
-    return height_;
-  }
-  uint8_t &operator()(int x, int y)
-  {
-    return data_[y * width_ + x];
-  }
-  GridMap(int width, int height) : width_(width), height_(height)
-  {
-    data_ = new uint8_t[width * height];
-  }
-  ~GridMap()
-  {
-    delete[] data_;
-  }
+  GridMap(int width, int height) : width_(width), height_(height) { data_ = new uint8_t[width * height]; }
   GridMap(uint8_t *data, int width, int height) : width_(width), height_(height)
   {
     this->data_ = new uint8_t[width * height];
@@ -79,6 +41,20 @@ struct GridMap
     this->data_ = new uint8_t[width * height];
     std::fill_n(this->data_, width * height, value);
   }
+
+  int size() const { return width_ * height_; }
+  uint8_t *data() { return data_; }
+  int rows() const { return height_; }
+  int cols() const { return width_; }
+  int width() const { return width_; }
+  int height() const { return height_; }
+  uint8_t &operator()(int x, int y) { return data_[y * width_ + x]; }
+
+  ~GridMap() { delete[] data_; }
+
+  uint8_t *data_;
+  int width_;
+  int height_;
 };
 
 } // namespace Env

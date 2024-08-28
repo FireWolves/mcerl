@@ -11,7 +11,10 @@ namespace pybind11
 {
 namespace detail
 {
-//! 实现 cv::Point 和 tuple(x,y) 之间的转换。
+/**
+ * @brief 实现 cv::Point 和 tuple(x,y) 之间的转换。 copied from github
+ *
+ */
 template <> struct type_caster<cv::Point>
 {
   //! 定义该类型名为 tuple_xy, 并声明类型为 cv::Point 的局部变量 value。
@@ -44,27 +47,28 @@ template <> struct type_caster<cv::Point>
 
   //! 步骤2： 从 C++ 转换到 Python。
   //! 将 C++ cv::Mat 对象转换到 tuple，参数2和参数3常忽略。
-  static handle cast(const cv::Point &pt, return_value_policy, handle)
-  {
-    return py::make_tuple(pt.x, pt.y).release();
-  }
+  static handle cast(const cv::Point &pt, return_value_policy, handle) { return py::make_tuple(pt.x, pt.y).release(); }
 };
 
 } // namespace detail
 } // namespace pybind11
+/**
+ * @brief Construct environment to pybind11 module object
+ *
+ */
 PYBIND11_MODULE(_core, env)
 {
   py::class_<Env::Environment>(env, "Environment")
       .def(py::init<int, int, int, int, int, int, int, int>())
-      .def("init", &Env::Environment::init)
       .def("reset", &Env::Environment::reset)
-      .def("test_map_update", &Env::Environment::test_map_update)
-      .def("test_frontier_detection", &Env::Environment::test_frontier_detection)
-      .def("test_a_star", &Env::Environment::test_a_star)
+      .def("step", &Env::Environment::step)
+      .def("done", &Env::Environment::done)
       .def("env_map", &Env::Environment::env_map)
       .def("global_map", &Env::Environment::global_map)
       .def("agent_map", &Env::Environment::agent_map)
-      .def("step", &Env::Environment::step);
+      .def("test_map_update", &Env::Environment::test_map_update)
+      .def("test_frontier_detection", &Env::Environment::test_frontier_detection)
+      .def("test_a_star", &Env::Environment::test_a_star);
 
   py::class_<Env::GridMap>(env, "GridMap", py::buffer_protocol())
       .def_buffer([](Env::GridMap &m) -> py::buffer_info {
@@ -100,6 +104,7 @@ PYBIND11_MODULE(_core, env)
       .def_readonly("robot_id", &Env::Info::robot_id)
       .def_readonly("step_cnt", &Env::Info::step_cnt)
       .def_readonly("agent_step_cnt", &Env::Info::agent_step_cnt)
+      .def_readonly("delta_time", &Env::Info::delta_time)
       .def_readonly("exploration_rate", &Env::Info::exploration_rate);
 
   py::class_<Env::Reward>(env, "Reward")

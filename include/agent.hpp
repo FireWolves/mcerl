@@ -13,10 +13,14 @@
 
 #include "common.hpp"
 #include "grid_map.hpp"
-#include <iostream>
 #include <memory>
+#include <spdlog/spdlog.h>
 namespace Env
 {
+/**
+ * @brief NONE value
+ *
+ */
 constexpr int NONE = -1;
 /**
  * @brief base class for state
@@ -28,6 +32,17 @@ struct AgentState
   std::unique_ptr<GridMap> map;
   std::unique_ptr<Path> executing_path;
   std::vector<FrontierPoint> frontier_points;
+  void reset()
+  {
+    executing_path = nullptr;
+    frontier_points.clear();
+  }
+  void reset(Coord pos, int map_width, int map_height)
+  {
+    reset();
+    this->pos = pos;
+    this->map = std::make_unique<GridMap>(map_width, map_height, UNKNOWN);
+  }
 };
 
 struct AgentInfo
@@ -37,23 +52,43 @@ struct AgentInfo
   int num_rays;
   int step_count;
   int max_steps;
+  int delta_time;
   std::shared_ptr<GridMap> env_map;
+  void reset() { delta_time = 0; }
+  void reset(int id, int sensor_range, int num_rays, int max_steps)
+  {
+    reset();
+    this->id = id;
+    this->sensor_range = sensor_range;
+    this->num_rays = num_rays;
+    this->max_steps = max_steps;
+    this->step_count = 0;
+  }
+  void reset(int id, int sensor_range, int num_rays, int max_steps, std::shared_ptr<GridMap> env_map)
+  {
+    reset();
+    reset(id, sensor_range, num_rays, max_steps);
+    this->env_map = env_map;
+  }
 };
 
 struct AgentReward
 {
   int explored_pixels = 0;
+  void reset() { explored_pixels = 0; }
 };
 
 struct AgentDone
 {
-  bool done;
+  bool done = false;
+  void reset() { done = false; }
 };
 struct AgentAction
 {
   int target_idx;
-  int target_x;
-  int target_y;
+  Coord target_pos;
+
+  void reset() { target_idx = NONE; }
 };
 class Agent
 {
@@ -64,31 +99,22 @@ public:
   AgentReward reward;
   AgentDone done;
   Agent() = default;
+  void reset()
+  {
+    state.reset();
+    info.reset();
+    reward.reset();
+    done.reset();
+    action.reset();
+  }
   void reset(std::shared_ptr<GridMap> env_map, Coord pos, int id, int max_steps, int sensor_range, int num_rays)
   {
-    std::cout << "reset agent " << id << std::endl;
-    info.env_map = env_map;
-    info.id = id;
-    info.max_steps = max_steps;
-    info.sensor_range = sensor_range;
-    info.num_rays = num_rays;
-    info.step_count = 0;
-
-    state.frontier_points.clear();
-    std::cout << "make map" << std::endl;
-    state.map = std::make_unique<GridMap>(env_map->width_, env_map->height_, UNKNOWN);
-    if (state.map == nullptr)
-    {
-      std::cout << "map is nullptr" << std::endl;
-    }
-    state.executing_path = nullptr;
-    state.pos = pos;
-
-    action.target_idx = NONE;
-
-    reward.explored_pixels = 0;
-
-    done.done = false;
+    spdlog::debug("resetting agent {} at pos: {}", id, pos);
+    state.reset(pos, env_map->width(), env_map->height());
+    info.reset(id, sensor_range, num_rays, max_steps, env_map);
+    reward.reset();
+    done.reset();
+    action.reset();
   }
 };
 

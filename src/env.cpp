@@ -1,7 +1,9 @@
 #include "env.hpp"
 #include "algorithms.hpp"
-#include <iostream>
+#include "spdlog/cfg/env.h"
+#include <spdlog/sinks/basic_file_sink.h>
 
+#include <spdlog/spdlog.h>
 namespace Env
 {
 
@@ -11,215 +13,244 @@ Environment::Environment(int num_agents, int max_steps, int max_steps_per_agent,
       sensor_range_(sensor_range), num_rays_(num_rays), min_frontier_pixel_(min_frontier_pixel),
       max_frontier_pixel_(max_frontier_pixel)
 {
+  // 创建一个控制台日志接收器
+  // auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+
+  // 创建一个文件日志接收器
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_st>("logs/debug.txt", true);
+
+  // 创建一个复合日志器，将日志同时输出到控制台和文件
+  spdlog::logger logger("env", {file_sink});
+
+  // 设置日志格式（可选）
+  // logger.set_pattern("[%Y-%m-%d %H:%M:%S] [%l] %v");
+
+  // 替换默认日志器
+  spdlog::set_default_logger(std::make_shared<spdlog::logger>(logger));
+  spdlog::cfg::load_env_levels();
+  spdlog::flush_on(spdlog::level::trace);
   agents_.resize(num_agents);
 }
 
 void Environment::init(GridMap env_map, std::vector<Coord> poses)
 {
-  std::cout << "init" << std::endl;
+  spdlog::debug("init");
+
   this->env_map_ = std::make_shared<GridMap>(env_map);
   this->global_map_ = std::make_shared<GridMap>(env_map.rows(), env_map.cols(), UNKNOWN);
-  std::cout << "env_map created" << std::endl;
+  spdlog::trace("map created");
+
   this->init_poses_ = poses;
+  spdlog::trace("posed setted");
 
-  this->step_count_ = 0;
-  this->is_done_ = false;
-  std::cout << "resetting agents" << std::endl;
+  spdlog::debug("resetting track info");
+  this->reset_state();
 
+  spdlog::debug("resetting agents");
   for (int i = 0; i < num_agents_; i++)
     agents_[i].reset(this->env_map_, poses[i], i, max_steps_per_agent_, sensor_range_, num_rays_);
 }
 
-std::tuple<Observation, Done, Info> Environment::reset(GridMap env_map, std::vector<Coord> poses)
+FrameData Environment::reset(GridMap env_map, std::vector<Coord> poses)
 {
-  std::cout << "reset" << std::endl;
+  spdlog::info("reset");
+
   this->init(env_map, poses);
-  Observation obs;
-  std::cout << "getting poses" << std::endl;
-  for (auto &agent : agents_)
-    obs.robot_poses.push_back(agent.state.pos);
-  Info info;
-  info.step_cnt = step_count_;
-  step_count_++;
-  Done done = false;
-  std::cout << "cycling agents" << std::endl;
-  // check if any agent requires a new target
-  for (auto &agent : agents_)
+
+  auto next_act_agent = get_next_act_agent();
+  spdlog::info("next act agent: {}", next_act_agent);
+
+  if (next_act_agent == -1)
   {
-    std::cout << "checking agent " << agent.info.id << std::endl;
-    if (agent.action.target_idx == NONE)
-    {
-      std::cout << "agent " << agent.info.id << " requires a new target" << std::endl;
-      std::cout << "updating map" << std::endl;
-      if (agent.state.map.get() == nullptr)
-      {
-        std::cout << "ERROR: map is nullptr" << std::endl;
-      }
-      if (agent.state.map.get() == nullptr)
-      {
-        std::cout << "ERROR: map is nullptr" << std::endl;
-      }
-      Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
-      std::cout << "Map:" << std::endl;
-      std::cout << "merge map" << std::endl;
-      Alg::map_merge(global_map_, agent.state.map.get());
-      std::cout << "detecting frontier" << std::endl;
-      auto frontiers =
-          Alg::frontier_detection(agent.state.map.get(), min_frontier_pixel_, max_frontier_pixel_, sensor_range_);
-      std::cout << "frontiers size: " << frontiers.size() << std::endl;
-      agent.state.frontier_points = frontiers;
-      obs.frontier_points = frontiers;
-      if (frontiers.empty())
-      {
-        agent.done.done = true;
-        done = true;
-      }
-      info.robot_id = agent.info.id;
-      std::cout << "calculating exploration rate" << std::endl;
-      info.exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
-      info.agent_step_cnt = agent.info.step_count;
-      agent.info.step_count++;
-      break;
-    }
+    next_act_agent = 0;
+    spdlog::info("no agent requires a new target, returning frame data for agent 0");
   }
-  return std::make_tuple(obs, done, info);
+  else
+  {
+    spdlog::info("agent {} requires a new target", next_act_agent);
+  }
+
+  return get_frame_data(next_act_agent);
 }
 
-std::tuple<Observation, Reward, Done, Info> Environment::step(int agent_id, Action target_index)
+FrameData Environment::step(int agent_id, Action target_index)
 {
-  std::cout << "step" << std::endl;
+  spdlog::info("step");
 
+  spdlog::info("set action agent_id: {} target_index: {}", agent_id, target_index);
   set_action(agent_id, target_index);
-  Observation obs;
-  Info info;
-  info.step_cnt = step_count_;
-  step_count_++;
-  Done done = false;
-  Reward reward;
-  reward.exploration_reward = 0;
-  reward.time_step = 0;
-  // check if any agent requires a new target
-  for (auto &agent : agents_)
+
+  spdlog::info("check if agent requires a new target");
+  auto next_act_agent = get_next_act_agent();
+  if (next_act_agent != -1)
   {
-    if (agent.action.target_idx == NONE)
-    {
-      std::cout << "agent " << agent.info.id << " requires a new target" << std::endl;
-      Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
-      auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
-      std::cout << "new explored pixels: " << new_explored_pixels << std::endl;
-      if (agent.info.step_count != 0)
-      {
-        agent.reward.explored_pixels += new_explored_pixels;
-
-        std::cout << "reward.explored_pixels: " << agent.reward.explored_pixels << std::endl;
-      }
-      reward.exploration_reward = agent.reward.explored_pixels;
-      std::cout << "merge map" << std::endl;
-      Alg::map_merge(global_map_, agent.state.map.get());
-      std::cout << "detecting frontier" << std::endl;
-      auto frontiers =
-          Alg::frontier_detection(agent.state.map.get(), min_frontier_pixel_, max_frontier_pixel_, sensor_range_);
-      std::cout << "frontiers size: " << frontiers.size() << std::endl;
-      agent.state.frontier_points = frontiers;
-      obs.frontier_points = frontiers;
-      reward.exploration_reward = agent.reward.explored_pixels;
-      for (auto &i : agents_)
-      {
-        obs.robot_poses.push_back(i.state.pos);
-      }
-      if (frontiers.empty())
-      {
-        agent.done.done = true;
-        done = true;
-        std::cout << "done" << std::endl;
-      }
-      info.robot_id = agent.info.id;
-      std::cout << "calculating exploration rate" << std::endl;
-      info.exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
-      info.agent_step_cnt = agent.info.step_count;
-
-      agent.info.step_count++;
-      return std::make_tuple(obs, reward, done, info);
-    }
+    spdlog::debug("agent {} requires a new target", next_act_agent);
+    return get_frame_data(next_act_agent);
   }
-
   // move the agent
-  std::cout << "moving agent" << std::endl;
-  for (int i = 0;; ++i)
+  spdlog::info("moving agent");
+  next_act_agent = step_once();
+  if (next_act_agent == -1)
   {
-    for (auto &agent : agents_)
-    {
-      if (agent.done.done)
-      {
-        continue;
-      }
-      if (agent.state.executing_path != nullptr && !agent.state.executing_path->empty())
-      {
-        auto next_pos = agent.state.executing_path->front();
-        agent.state.executing_path->erase(agent.state.executing_path->begin());
-        agent.state.pos = next_pos;
-        Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
-        auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
-        std::cout << "calculating new explored pixels: " << new_explored_pixels << std::endl;
-        if (agent.info.step_count != 0)
-        {
-          agent.reward.explored_pixels += new_explored_pixels;
-        }
-        Alg::map_merge(global_map_, agent.state.map.get());
-      }
-      else
-      {
-        std::cout << "agent " << agent.info.id << " reached target" << std::endl;
-        auto frontiers =
-            Alg::frontier_detection(agent.state.map.get(), min_frontier_pixel_, max_frontier_pixel_, sensor_range_);
-        std::cout << "frontiers size: " << frontiers.size() << std::endl;
-        agent.state.frontier_points = frontiers;
-        obs.frontier_points = frontiers;
-        reward.exploration_reward = agent.reward.explored_pixels;
-        std::cout << "reward.exploration_reward: " << reward.exploration_reward << std::endl;
-        for (auto &i : agents_)
-        {
-          obs.robot_poses.push_back(i.state.pos);
-        }
-        if (frontiers.empty())
-        {
-          agent.done.done = true;
-          done = true;
-        }
-        info.robot_id = agent.info.id;
-        std::cout << "calculating exploration rate" << std::endl;
-        info.exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
-        info.agent_step_cnt = agent.info.step_count;
-        agent.info.step_count++;
-        return std::make_tuple(obs, reward, done, info);
-      }
-    }
-    if (std::find_if(agents_.begin(), agents_.end(), [](const auto &x) { return !x.done.done; }) == agents_.end())
-    {
-      done = true;
-      break;
-    }
+    spdlog::info("all agents done");
+    this->is_done_ = true;
+    return get_frame_data(0);
   }
-  return std::make_tuple(obs, reward, done, info);
+  return get_frame_data(next_act_agent);
 }
 
+/**
+ * @brief set the action for the agent
+ * @note  this will clear the frontier points and rewards, compute the path and set the target index
+ * @param agent_id  the id of the agent
+ * @param target_idx  the index of the target frontier point
+ */
 void Environment::set_action(int agent_id, Action target_idx)
 {
+  auto &&agent = agents_[agent_id];
+  FrontierPoint target_frontier = agent.state.frontier_points[target_idx];
+  spdlog::debug("reset agent {} action, state, reward", agent_id);
+  agent.action.reset();
+  agent.reward.reset();
+  agent.state.reset();
+  agent.info.reset();
 
-  agents_[agent_id].action.target_idx = target_idx;
-  agents_[agent_id].action.target_x = agents_[agent_id].state.frontier_points[target_idx].pos.x;
-  agents_[agent_id].action.target_y = agents_[agent_id].state.frontier_points[target_idx].pos.y;
-  std::cout << "set_action for " << agent_id << " action index: " << target_idx
-            << " pos: " << agents_[agent_id].state.frontier_points[target_idx].pos << std::endl;
-  std::cout << "computing path" << std::endl;
-  agents_[agent_id].state.executing_path =
-      std::make_unique<Path>(Alg::a_star(agents_[agent_id].state.map.get(), agents_[agent_id].state.pos,
-                                         agents_[agent_id].state.frontier_points[target_idx].pos));
-  std::cout << "path size: " << agents_[agent_id].state.executing_path->size() << std::endl;
-  std::cout << "clear frontier points" << std::endl;
-  agents_[agent_id].state.frontier_points.clear();
-  std::cout << "clearing explored pixels" << std::endl;
-  agents_[agent_id].reward.explored_pixels = 0;
+  spdlog::debug("set_action for {} action index: {} target pos: {}", agent_id, target_idx, target_frontier.pos);
+  agent.action = {target_idx, target_frontier.pos};
+
+  spdlog::info("computing path");
+  agent.state.executing_path =
+      std::make_unique<Path>(Alg::a_star(agent.state.map.get(), agent.state.pos, target_frontier.pos));
+  spdlog::debug("path size: {}", agent.state.executing_path->size());
+}
+
+/**
+ * @brief return the observation, reward, done flag and info for specific agent
+ * @param agent_id the id of the agent
+ * @note this will update the agent map, merge agent map to global map, calculate the whole exploration rate, detect
+ * frontiers and check if the agent is done
+ * @note the agent_id should be valid and not done
+ * @return FrameData
+ */
+FrameData Environment::get_frame_data(int agent_id)
+{
+  spdlog::info("get frame data for agent {}", agent_id);
+
+  Observation obs;
+  Reward reward;
+  Done done = false;
+  Info info;
+
+  // assume the agent is not done
+  auto &&agent = agents_[agent_id];
+
+  info.robot_id = agent.info.id;
+  info.step_cnt = step_count_;
+  info.delta_time = agent.info.delta_time;
+  step_count_++;
+  info.agent_step_cnt = agent.info.step_count;
+  agent.info.step_count++;
+
+  // manually update the map
+  spdlog::trace("updating map");
+  Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
+
+  spdlog::trace("calculating new explored pixels");
+  auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
+  agent.reward.explored_pixels += new_explored_pixels;
+  reward.exploration_reward = agent.reward.explored_pixels;
+
+  spdlog::trace("detecting frontiers");
+  auto &&frontiers =
+      Alg::frontier_detection(agent.state.map.get(), min_frontier_pixel_, max_frontier_pixel_, sensor_range_);
+  spdlog::debug("frontiers size: {}", frontiers.size());
+
+  std::vector<FrontierPoint> valid_frontiers;
+  for (auto &frontier : frontiers)
+    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4))
+      valid_frontiers.push_back(frontier);
+  spdlog::debug("valid frontiers size: {}", valid_frontiers.size());
+  agent.state.frontier_points = valid_frontiers;
+  obs.frontier_points = valid_frontiers;
+
+  if (valid_frontiers.empty())
+  {
+    spdlog::info("agent {} done", agent_id);
+    agent.done.done = true;
+    done = true;
+  }
+
+  spdlog::trace("getting agent poses");
+  for (auto &i : agents_)
+  {
+    obs.robot_poses.push_back(i.state.pos);
+  }
+  std::swap(obs.robot_poses[0], obs.robot_poses[agent_id]);
+
+  spdlog::trace("merging map to global map");
+  Alg::map_merge(global_map_, agent.state.map.get());
+
+  spdlog::trace("calculating exploration rate");
+  auto exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
+  info.exploration_rate = exploration_rate;
+
+  return std::move(std::make_tuple(obs, reward, done, info));
+}
+int Environment::get_next_act_agent()
+{
+  auto res = std::find_if(agents_.begin(), agents_.end(),
+                          [](const Agent &x) { return x.action.target_idx == -1 && x.done.done != true; });
+  if (res != agents_.end())
+    return res->info.id;
+  return -1;
+}
+
+int Environment::step_once()
+{
+  spdlog::trace("step once");
+  while (++tick_ < INT_MAX)
+  {
+    spdlog::trace("tick: {}", tick_);
+    for (auto &agent : agents_)
+    {
+      spdlog::trace("agent: {}", agent.info.id);
+      if (agent.done.done)
+      {
+        spdlog::info("agent {} done", agent.info.id);
+        if (std::find_if(agents_.begin(), agents_.end(), [](const Agent &agent) { return agent.done.done != true; }) ==
+            agents_.end())
+        {
+          spdlog::info("all agents done");
+          return -1;
+        }
+        continue;
+      }
+      if (agent.state.executing_path == nullptr || agent.state.executing_path->empty())
+      {
+        spdlog::info("agent {} reached target", agent.info.id);
+        return agent.info.id;
+      }
+
+      spdlog::info("moving agent");
+
+      auto next_pos = agent.state.executing_path->front();
+      agent.state.executing_path->erase(agent.state.executing_path->begin());
+      agent.state.pos = next_pos;
+
+      spdlog::trace("updating map");
+      Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
+
+      auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
+      spdlog::info("new explored pixels: {}", new_explored_pixels);
+      agent.reward.explored_pixels += new_explored_pixels;
+      agent.info.delta_time++;
+
+      spdlog::trace("merging map to global map");
+      Alg::map_merge(global_map_, agent.state.map.get());
+    }
+  }
+  spdlog::info("step limit reached");
+  return -1;
 }
 
 } // namespace Env

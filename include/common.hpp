@@ -9,6 +9,7 @@
  *
  */
 #pragma once
+#include <fmt/core.h>
 #include <opencv2/core.hpp>
 #include <vector>
 
@@ -55,7 +56,7 @@ struct Info
   int step_cnt; /**< The step count in the environment. */
   int agent_step_cnt;
   float exploration_rate; /**< The exploration rate of the environment. */
-  // int delta_time;         /**< The time difference in the environment. */
+  int delta_time;         /**< The time difference in the environment. */
 };
 
 /**
@@ -76,4 +77,20 @@ using Done = bool;
  * @brief Alias for an action in the environment.
  */
 using Action = int;
+using FrameData = std::tuple<Observation, Reward, Done, Info>;
+
 } // namespace Env
+
+/**
+ * @brief opencv point formatter for fmt library, copied from github
+ *
+ */
+template <> struct fmt::formatter<cv::Point>
+{
+  constexpr auto parse(format_parse_context &ctx) { return ctx.end(); }
+
+  template <typename Context> auto format(const cv::Point &p, Context &ctx)
+  {
+    return format_to(ctx.out(), "[{}, {}]", p.x, p.y);
+  }
+};

@@ -1,8 +1,8 @@
 #include "algorithms.hpp"
 #include <boost/container_hash/hash.hpp>
-#include <iostream>
 #include <opencv2/imgproc.hpp>
 #include <random>
+#include <spdlog/spdlog.h>
 #include <unordered_set>
 namespace Alg
 {
@@ -28,6 +28,7 @@ int calculate_surrounding_unexplored_pixels(Env::GridMap *exploration_map, Coord
 }
 void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coord pos, int sensor_range, int num_rays)
 {
+
   std::default_random_engine random_engine;
   std::uniform_real_distribution<float> random_offset;
 
@@ -173,39 +174,44 @@ struct Node
 
     return seed;
   }
-  bool operator==(const Node &rhs) const
-  {
-    return pos == rhs.pos;
-  }
-  bool operator<(const Node &rhs) const
-  {
-    return f < rhs.f;
-  }
+  bool operator==(const Node &rhs) const { return pos == rhs.pos; }
+  bool operator<(const Node &rhs) const { return f < rhs.f; }
 };
+
+Coord get_surrogate_target(Coord target, int range, GridMap *exploration_map)
+{
+  // check surrounding pixels in range
+  for (int x_offs = 0; x_offs < range; ++x_offs)
+  {
+    for (int y_offs = 0; y_offs < range; ++y_offs)
+    {
+      for (int i = 0; i < 8; i++)
+      {
+        auto &&next_pos = target + Coord{DIRECTIONS[i].x * x_offs, DIRECTIONS[i].y * y_offs};
+        if (next_pos.x < 0 || next_pos.x >= exploration_map->cols() || next_pos.y < 0 ||
+            next_pos.y >= exploration_map->rows())
+          continue;
+        if ((*exploration_map)(next_pos.x, next_pos.y) == FREE)
+        {
+          target = next_pos;
+          return target;
+        }
+      }
+    }
+  }
+  return target;
+}
 
 Path a_star(GridMap *exploration_map, Coord start, Coord end)
 {
-  if (exploration_map->operator()(end.x, end.y) != FREE)
+  end = get_surrogate_target(end, 5, exploration_map);
+  spdlog::debug("start: ({}, {}), end: ({}, {})", start.x, start.y, end.x, end.y);
+  if ((*exploration_map)(end.x, end.y) != FREE)
   {
-    for (auto i = 0; i < 8; i++)
-    {
-      auto &&next_pos = end + DIRECTIONS[i];
-      if (next_pos.x < 0 || next_pos.x >= exploration_map->cols() || next_pos.y < 0 ||
-          next_pos.y >= exploration_map->rows())
-        continue;
-      if ((*exploration_map)(next_pos.x, next_pos.y) == FREE)
-      {
-        end = next_pos;
-        std::cout << "end point is not free, new end point: " << end << std::endl;
-        break;
-      }
-    }
-    if ((*exploration_map)(end.x, end.y) != FREE)
-    {
-      std::cout << "end point is not free: " << exploration_map->operator()(end.x, end.y) << std::endl;
-      return {};
-    }
+    spdlog::warn("Target is not reachable");
+    return {};
   }
+
   // open_set: 未访问的节点 close_set: 已访问的节点
   std::unordered_set<Node, boost::hash<Node>> open_set, close_set;
 
@@ -313,4 +319,14 @@ float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *expl
   auto &&mat_exploration = cv::Mat(exploration_map->rows(), exploration_map->cols(), CV_8UC1, exploration_map->data());
   return static_cast<float>(cv::countNonZero(mat_exploration == FREE)) / cv::countNonZero(mat_env == FREE);
 }
+
+bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int radius,
+                       int threshold)
+{
+  auto unexplored_pixels = calculate_surrounding_unexplored_pixels(global_map.get(), frontier_point.pos, radius);
+  if (unexplored_pixels < threshold)
+    return false;
+  return true;
+}
+
 } // namespace Alg
