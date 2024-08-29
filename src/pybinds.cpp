@@ -105,7 +105,8 @@ PYBIND11_MODULE(_core, env)
       .def_readonly("step_cnt", &Env::Info::step_cnt)
       .def_readonly("agent_step_cnt", &Env::Info::agent_step_cnt)
       .def_readonly("delta_time", &Env::Info::delta_time)
-      .def_readonly("exploration_rate", &Env::Info::exploration_rate);
+      .def_readonly("agent_exploration_rate", &Env::Info::agent_exploration_rate)
+      .def_readonly("global_exploration_rate", &Env::Info::global_exploration_rate);
 
   py::class_<Env::Reward>(env, "Reward")
       .def(py::init<>())

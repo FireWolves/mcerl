@@ -22,6 +22,7 @@ namespace Env
  *
  */
 constexpr int NONE = -1;
+constexpr int MAX_FAILED_ATTEMPTS = 5;
 /**
  * @brief base class for state
  *
@@ -53,8 +54,10 @@ struct AgentInfo
   int step_count;
   int max_steps;
   int delta_time;
+  int failed_attempts;
+  float exploration_rate;
   std::shared_ptr<GridMap> env_map;
-  void reset() { delta_time = 0; }
+  void reset() { delta_time = 0, exploration_rate = 0.0; }
   void reset(int id, int sensor_range, int num_rays, int max_steps)
   {
     reset();
@@ -63,10 +66,10 @@ struct AgentInfo
     this->num_rays = num_rays;
     this->max_steps = max_steps;
     this->step_count = 0;
+    this->failed_attempts = 0;
   }
   void reset(int id, int sensor_range, int num_rays, int max_steps, std::shared_ptr<GridMap> env_map)
   {
-    reset();
     reset(id, sensor_range, num_rays, max_steps);
     this->env_map = env_map;
   }

@@ -108,6 +108,11 @@ FrameData Environment::step(int agent_id, Action target_index)
 void Environment::set_action(int agent_id, Action target_idx)
 {
   auto &&agent = agents_[agent_id];
+  if (agent.done.done)
+  {
+    spdlog::info("agent {} done, skip setting action.", agent_id);
+    return;
+  }
   FrontierPoint target_frontier = agent.state.frontier_points[target_idx];
   spdlog::debug("reset agent {} action, state, reward", agent_id);
   agent.action.reset();
@@ -115,12 +120,24 @@ void Environment::set_action(int agent_id, Action target_idx)
   agent.state.reset();
   agent.info.reset();
 
-  spdlog::debug("set_action for {} action index: {} target pos: {}", agent_id, target_idx, target_frontier.pos);
+  spdlog::debug("set action for {} action index: {} target pos: {}", agent_id, target_idx, target_frontier.pos);
   agent.action = {target_idx, target_frontier.pos};
 
   spdlog::info("computing path");
   agent.state.executing_path =
-      std::make_unique<Path>(Alg::a_star(agent.state.map.get(), agent.state.pos, target_frontier.pos));
+      std::make_unique<Path>(Alg::a_star(global_map_.get(), agent.state.pos, target_frontier.pos));
+  if (agent.state.executing_path->empty())
+  {
+    spdlog::info("path is empty");
+    agent.info.failed_attempts++;
+    if (agent.info.failed_attempts >= MAX_FAILED_ATTEMPTS)
+    {
+      spdlog::info("agent {} done for max failed attempts received", agent_id);
+      spdlog::info("start grid: {}, target grid: {}", agent.state.map->operator()(agent.state.pos.x, agent.state.pos.y),
+                   agent.state.map->operator()(target_frontier.pos.x, target_frontier.pos.y));
+      agent.done.done = true;
+    }
+  }
   spdlog::debug("path size: {}", agent.state.executing_path->size());
 }
 
@@ -190,9 +207,12 @@ FrameData Environment::get_frame_data(int agent_id)
   spdlog::trace("merging map to global map");
   Alg::map_merge(global_map_, agent.state.map.get());
 
-  spdlog::trace("calculating exploration rate");
-  auto exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
-  info.exploration_rate = exploration_rate;
+  auto agent_exploration_rate = Alg::exploration_rate(env_map_, agent.state.map.get());
+  auto global_exploration_rate = Alg::exploration_rate(env_map_, global_map_.get());
+  spdlog::trace("agent exploration rate:{}, global exploration rate: {}", agent_exploration_rate,
+                global_exploration_rate);
+  info.agent_exploration_rate = agent_exploration_rate;
+  info.global_exploration_rate = global_exploration_rate;
 
   return std::move(std::make_tuple(observation, reward, done, info));
 }
@@ -208,7 +228,7 @@ int Environment::get_next_act_agent()
 int Environment::step_once()
 {
   spdlog::trace("step once");
-  while (++tick_ < INT_MAX)
+  while (++tick_ < max_steps_)
   {
     spdlog::trace("tick: {}", tick_);
     for (auto &agent : agents_)
@@ -216,7 +236,7 @@ int Environment::step_once()
       spdlog::trace("agent: {}", agent.info.id);
       if (agent.done.done)
       {
-        spdlog::info("agent {} done", agent.info.id);
+        spdlog::info("agent {} done, skip step.", agent.info.id);
         if (std::find_if(agents_.begin(), agents_.end(), [](const Agent &agent) { return agent.done.done != true; }) ==
             agents_.end())
         {

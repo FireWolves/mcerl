@@ -281,6 +281,7 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end)
       }
     }
   }
+  spdlog::warn("No path found");
   return {};
 }
 void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)

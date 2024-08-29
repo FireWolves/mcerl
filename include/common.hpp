@@ -55,7 +55,8 @@ struct Info
   int agent_id; /**< The ID of the agent. */
   int step_cnt; /**< The step count in the environment. */
   int agent_step_cnt;
-  float exploration_rate; /**< The exploration rate of the environment. */
+  float global_exploration_rate; /**< The exploration rate of the environment. */
+  float agent_exploration_rate; /**< The exploration rate of the agent. */
   int delta_time;         /**< The time difference in the environment. */
 };
 
