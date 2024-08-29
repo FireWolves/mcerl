@@ -8,10 +8,10 @@ namespace Env
 {
 
 Environment::Environment(int num_agents, int max_steps, int max_steps_per_agent, int velocity, int sensor_range,
-                         int num_rays, int min_frontier_pixel, int max_frontier_pixel)
+                         int num_rays, int min_frontier_pixel, int max_frontier_pixel, float exploration_threshold)
     : num_agents_(num_agents), max_steps_(max_steps), max_steps_per_agent_(max_steps_per_agent), velocity_(velocity),
       sensor_range_(sensor_range), num_rays_(num_rays), min_frontier_pixel_(min_frontier_pixel),
-      max_frontier_pixel_(max_frontier_pixel)
+      max_frontier_pixel_(max_frontier_pixel), exploration_threshold_(exploration_threshold)
 {
   // 创建一个控制台日志接收器
   // auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -37,7 +37,7 @@ void Environment::init(GridMap env_map, std::vector<Coord> poses)
   spdlog::debug("init");
 
   this->env_map_ = std::make_shared<GridMap>(env_map);
-  this->global_map_ = std::make_shared<GridMap>(env_map.rows(), env_map.cols(), UNKNOWN);
+  this->global_map_ = std::make_shared<GridMap>(env_map.width(), env_map.height(), UNKNOWN);
   spdlog::trace("map created");
 
   this->init_poses_ = poses;
@@ -54,6 +54,12 @@ void Environment::init(GridMap env_map, std::vector<Coord> poses)
 FrameData Environment::reset(GridMap env_map, std::vector<Coord> poses)
 {
   spdlog::info("reset");
+  spdlog::info("env_map size: {}x{}", env_map.rows(), env_map.cols());
+  spdlog::info("poses:");
+  std::string poses_log;
+  for (auto &pose : poses)
+    poses_log += "(" + std::to_string(pose.x) + ", " + std::to_string(pose.y) + ") ";
+  spdlog::info(poses_log);
 
   this->init(env_map, poses);
 
@@ -213,6 +219,11 @@ FrameData Environment::get_frame_data(int agent_id)
                 global_exploration_rate);
   info.agent_exploration_rate = agent_exploration_rate;
   info.global_exploration_rate = global_exploration_rate;
+  if (global_exploration_rate >= exploration_threshold_)
+  {
+    spdlog::info("global exploration rate reached threshold");
+    agent.done.done = true;
+  }
 
   return std::move(std::make_tuple(observation, reward, done, info));
 }

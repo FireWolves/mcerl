@@ -16,18 +16,24 @@ namespace Env
 {
 /**
  * @brief grid map data structure
- * @note Note that OccupancyGrid data starts on lower left corner in row major
- * (if seen as an image), width / X / col is from left to right, height / Y /
- * row is from bottom to top
+ * @note Note that OccupancyGrid data starts on top left corner in row major (if seen as an image), width / X / col is
+ * from left to right, height / Y / row is from top to bottom
  */
 
 struct GridMap
 {
   GridMap(int width, int height) : width_(width), height_(height) { data_ = new uint8_t[width * height]; }
-  GridMap(uint8_t *data, int width, int height) : width_(width), height_(height)
+  GridMap(uint8_t *data, int width, int height, bool copy = true) : width_(width), height_(height)
   {
-    this->data_ = new uint8_t[width * height];
-    std::copy(data, data + width * height, this->data_);
+    if (copy)
+    {
+      this->data_ = new uint8_t[width * height];
+      std::copy(data, data + width * height, this->data_);
+    }
+    else
+    {
+      this->data_ = data;
+    }
   }
   GridMap(const GridMap &other) : width_(other.width_), height_(other.height_)
   {
@@ -48,6 +54,8 @@ struct GridMap
   int cols() const { return width_; }
   int width() const { return width_; }
   int height() const { return height_; }
+  int x() const { return width_; }
+  int y() const { return height_; }
   uint8_t &operator()(int x, int y) { return data_[y * width_ + x]; }
 
   ~GridMap() { delete[] data_; }

@@ -38,11 +38,11 @@ struct AgentState
     executing_path = nullptr;
     frontier_points.clear();
   }
-  void reset(Coord pos, int map_width, int map_height)
+  void reset(Coord pos, int width, int height)
   {
     reset();
     this->pos = pos;
-    this->map = std::make_unique<GridMap>(map_width, map_height, UNKNOWN);
+    this->map = std::make_unique<GridMap>(width, height, UNKNOWN);
   }
 };
 

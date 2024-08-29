@@ -7,7 +7,38 @@
 namespace Alg
 {
 using namespace Env;
+struct Node
+{
+  Coord pos;
+  const Node *parent = nullptr;
+  int f = 0, g = 0, h = 0;
+  friend std::size_t hash_value(Node const &node)
+  {
+    std::size_t seed = 0;
 
+    boost::hash_combine(seed, node.pos.x);
+    boost::hash_combine(seed, node.pos.y);
+
+    return seed;
+  }
+  bool operator==(const Node &rhs) const { return pos == rhs.pos; }
+  bool operator<(const Node &rhs) const { return f < rhs.f; }
+};
+inline int sgn(const int &x)
+{
+  if (x > 0)
+    return 1;
+  if (x < 0)
+    return -1;
+  return 0;
+};
+cv::Point expand_point(cv::Point point, int rows, int cols, cv::Point origin, int expand_pixel)
+{
+  auto res = point + cv::Point{sgn((point.x - origin.x)), sgn((point.y - origin.y))} * expand_pixel;
+  res.x = std::clamp(res.x, 0, cols - 1);
+  res.y = std::clamp(res.y, 0, rows - 1);
+  return res;
+}
 int calculate_surrounding_unexplored_pixels(Env::GridMap *exploration_map, Coord pos, int range)
 {
   int rows = exploration_map->rows(), cols = exploration_map->cols();
@@ -26,8 +57,11 @@ int calculate_surrounding_unexplored_pixels(Env::GridMap *exploration_map, Coord
   }
   return unexplored_pixels;
 }
-void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coord pos, int sensor_range, int num_rays)
+void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coord pos, int sensor_range, int num_rays,
+                int expand_pixels)
 {
+  // we need to expand the pixels to avoid the ray cast error
+  sensor_range = std::max(0, sensor_range - expand_pixels);
 
   std::default_random_engine random_engine;
   std::uniform_real_distribution<float> random_offset;
@@ -57,7 +91,7 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
     for (int j = 0; j < it.count; j++, ++it)
     {
       auto &&current_point = mat.at<uint8_t>(it.pos());
-      polygon[i] = it.pos();
+      polygon[i] = expand_point(it.pos(), mat.rows, mat.cols, pos, expand_pixels);
       if (current_point == OCCUPIED)
       {
         break;
@@ -160,23 +194,6 @@ std::vector<FrontierPoint> frontier_detection(Env::GridMap *exploration_map, int
   return frontiers;
 }
 std::vector<Coord> DIRECTIONS = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}, {-1, -1}, {1, 1}, {-1, 1}, {1, -1}};
-struct Node
-{
-  Coord pos;
-  const Node *parent = nullptr;
-  int f = 0, g = 0, h = 0;
-  friend std::size_t hash_value(Node const &node)
-  {
-    std::size_t seed = 0;
-
-    boost::hash_combine(seed, node.pos.x);
-    boost::hash_combine(seed, node.pos.y);
-
-    return seed;
-  }
-  bool operator==(const Node &rhs) const { return pos == rhs.pos; }
-  bool operator<(const Node &rhs) const { return f < rhs.f; }
-};
 
 Coord get_surrogate_target(Coord target, int range, GridMap *exploration_map)
 {
@@ -310,8 +327,13 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
 }
 int calculate_new_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)
 {
+  spdlog::debug("calculate_new_explored_pixels");
   auto &&mat_global = cv::Mat(global_map->rows(), global_map->cols(), CV_8UC1, global_map->data());
   auto &&mat_update = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
+  spdlog::debug("mat_global shape: row:{}x col:{}, mat_update shape: row:{}x col:{}", mat_global.rows, mat_global.cols,
+                mat_update.rows, mat_update.cols);
+  spdlog::debug("global_map shape: row:{}x col:{}, agent_map shape: row:{}x col:{}", global_map->rows(),
+                global_map->cols(), agent_map->rows(), agent_map->cols());
   return cv::countNonZero((mat_global == UNKNOWN) & (mat_update != UNKNOWN));
 }
 float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *exploration_map)

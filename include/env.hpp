@@ -20,7 +20,7 @@ class Environment
 
 public:
   Environment(int num_agents, int max_steps, int max_steps_per_agent, int velocity, int sensor_range, int num_rays,
-              int min_frontier_pixel, int max_frontier_pixel);
+              int min_frontier_pixel, int max_frontier_pixel,float exploration_threshold);
 
   FrameData step(int agent_id, Action target_index);
 
@@ -44,6 +44,12 @@ public:
     return Alg::frontier_detection(&map, min_pixels, max_pixels, sensor_range);
   }
   Path test_a_star(GridMap map, Coord start, Coord end) { return Alg::a_star(&map, start, end); }
+  auto test_xy_coord(GridMap map, Coord coord) { return map(coord.x, coord.y); }
+  auto test_xy_cv_mat(GridMap map, Coord coord)
+  {
+    auto mat = cv::Mat(map.rows(), map.cols(), CV_8UC1, map.data());
+    return mat.at<uint8_t>(coord);
+  }
 
 private:
   std::vector<Agent> agents_;
@@ -59,6 +65,7 @@ private:
   int min_frontier_pixel_;
   int max_frontier_pixel_;
   int max_steps_per_agent_;
+  float exploration_threshold_;
   bool is_done_;
   int tick_;
 

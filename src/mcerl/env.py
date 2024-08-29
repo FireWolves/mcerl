@@ -10,6 +10,8 @@ import mcerl
 FREE = 255
 OCCUPIED = 0
 UNKNOWN = 127
+X = 1
+Y = 0
 
 
 class Env:
@@ -50,6 +52,7 @@ class Env:
         num_rays: int,
         min_frontier_pixel: int,
         max_frontier_pixel: int,
+        exploration_threshold: float = 0.95,
     ) -> None:
         """
         Initializes a new instance of the Env class.
@@ -75,6 +78,7 @@ class Env:
         self.num_rays = num_rays
         self.min_frontier_pixel = min_frontier_pixel
         self.max_frontier_pixel = max_frontier_pixel
+        self.exploration_threshold = exploration_threshold
 
         self._last_data: dict[str, Any] | None = None
 
@@ -87,6 +91,7 @@ class Env:
             num_rays,
             min_frontier_pixel,
             max_frontier_pixel,
+            exploration_threshold,
         )
 
     @property
@@ -270,8 +275,8 @@ class Env:
         valid_poses = []
         rng = np.random.default_rng()
         while len(valid_poses) < num_poses:
-            row = rng.integers(rows).item()
-            col = rng.integers(cols).item()
-            if grid_map[row, col] == 255:
-                valid_poses.append((row, col))
+            y = rng.integers(rows).item()
+            x = rng.integers(cols).item()
+            if grid_map[y, x] == 255:
+                valid_poses.append((x, y))
         return valid_poses

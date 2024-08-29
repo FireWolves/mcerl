@@ -1,4 +1,5 @@
 #include "env.hpp"
+#include "grid_map.hpp"
 #include <opencv2/core.hpp>
 #include <opencv2/core/core.hpp>
 #include <pybind11/numpy.h>
@@ -59,7 +60,7 @@ template <> struct type_caster<cv::Point>
 PYBIND11_MODULE(_core, env)
 {
   py::class_<Env::Environment>(env, "Environment")
-      .def(py::init<int, int, int, int, int, int, int, int>())
+      .def(py::init<int, int, int, int, int, int, int, int, float>())
       .def("reset", &Env::Environment::reset)
       .def("step", &Env::Environment::step)
       .def("done", &Env::Environment::done)
@@ -68,7 +69,9 @@ PYBIND11_MODULE(_core, env)
       .def("agent_map", &Env::Environment::agent_map)
       .def("test_map_update", &Env::Environment::test_map_update)
       .def("test_frontier_detection", &Env::Environment::test_frontier_detection)
-      .def("test_a_star", &Env::Environment::test_a_star);
+      .def("test_a_star", &Env::Environment::test_a_star)
+      .def("test_xy_coord", &Env::Environment::test_xy_coord)
+      .def("test_xy_cv_mat", &Env::Environment::test_xy_cv_mat);
 
   py::class_<Env::GridMap>(env, "GridMap", py::buffer_protocol())
       .def_buffer([](Env::GridMap &m) -> py::buffer_info {
@@ -86,7 +89,7 @@ PYBIND11_MODULE(_core, env)
           throw std::runtime_error("Incompatible format: expected a uint8_t array!");
         if (info.ndim != 2)
           throw std::runtime_error("Incompatible buffer dimension!");
-        return new Env::GridMap((uint8_t *)info.ptr, info.shape[0], info.shape[1]);
+        return Env::GridMap((uint8_t *)info.ptr, info.shape[1], info.shape[0], true);
       }));
 
   py::class_<Env::Observation>(env, "Observation")
