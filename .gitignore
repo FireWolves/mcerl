@@ -3,3 +3,5 @@ ray_cast
 .vscode
 logs/*
 *.pyc
+*.gif
+*.png
