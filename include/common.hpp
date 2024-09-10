@@ -45,6 +45,7 @@ struct Observation
 {
   std::vector<FrontierPoint> frontier_points; /**< The list of frontier points in the observation. */
   std::vector<Coord> agent_poses;             /**< The list of agent poses in the observation. */
+  std::vector<Coord> agent_targets;           /**< The list of agent targets in the observation. */
 };
 
 /**
@@ -56,8 +57,9 @@ struct Info
   int step_cnt; /**< The step count in the environment. */
   int agent_step_cnt;
   float global_exploration_rate; /**< The exploration rate of the environment. */
-  float agent_exploration_rate; /**< The exploration rate of the agent. */
-  int delta_time;         /**< The time difference in the environment. */
+  float agent_exploration_rate;  /**< The exploration rate of the agent. */
+  int delta_time;                /**< The time difference in the environment. */
+  int agent_explored_pixels;     /**< The number of explored pixels in the environment. */
 };
 
 /**
@@ -66,7 +68,7 @@ struct Info
 struct Reward
 {
   int exploration_reward; /**< The exploration reward in the environment. */
-  int time_step_reward;          /**< The time step in the environment. */
+  int time_step_reward;   /**< The time step in the environment. */
 };
 
 /**

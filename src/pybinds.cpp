@@ -89,13 +89,14 @@ PYBIND11_MODULE(_core, env)
           throw std::runtime_error("Incompatible format: expected a uint8_t array!");
         if (info.ndim != 2)
           throw std::runtime_error("Incompatible buffer dimension!");
-        return Env::GridMap((uint8_t *)info.ptr, info.shape[1], info.shape[0], true);
+        return Env::GridMap((uint8_t *)info.ptr, info.shape[1], info.shape[0]);
       }));
 
   py::class_<Env::Observation>(env, "Observation")
       .def(py::init<>())
       .def_readonly("frontier_points", &Env::Observation::frontier_points)
-      .def_readonly("agent_poses", &Env::Observation::agent_poses);
+      .def_readonly("agent_poses", &Env::Observation::agent_poses)
+      .def_readonly("agent_targets", &Env::Observation::agent_targets);
 
   py::class_<Env::FrontierPoint>(env, "FrontierPoint")
       .def(py::init<>())
@@ -109,7 +110,8 @@ PYBIND11_MODULE(_core, env)
       .def_readonly("agent_step_cnt", &Env::Info::agent_step_cnt)
       .def_readonly("delta_time", &Env::Info::delta_time)
       .def_readonly("agent_exploration_rate", &Env::Info::agent_exploration_rate)
-      .def_readonly("global_exploration_rate", &Env::Info::global_exploration_rate);
+      .def_readonly("global_exploration_rate", &Env::Info::global_exploration_rate)
+      .def_readonly("agent_explored_pixels", &Env::Info::agent_explored_pixels);
 
   py::class_<Env::Reward>(env, "Reward")
       .def(py::init<>())

@@ -325,15 +325,16 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
   mat_global.setTo(OCCUPIED, mat_update == OCCUPIED);
   mat_global.setTo(FREE, (mat_update == FREE) & (mat_global != OCCUPIED));
 }
-int calculate_new_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)
+int calculate_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)
 {
-  spdlog::debug("calculate_new_explored_pixels");
+  spdlog::trace("calculate_new_explored_pixels");
   auto &&mat_global = cv::Mat(global_map->rows(), global_map->cols(), CV_8UC1, global_map->data());
   auto &&mat_update = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
-  spdlog::debug("mat_global shape: row:{}x col:{}, mat_update shape: row:{}x col:{}", mat_global.rows, mat_global.cols,
+  spdlog::trace("mat_global shape: row:{}x col:{}, mat_update shape: row:{}x col:{}", mat_global.rows, mat_global.cols,
                 mat_update.rows, mat_update.cols);
-  spdlog::debug("global_map shape: row:{}x col:{}, agent_map shape: row:{}x col:{}", global_map->rows(),
+  spdlog::trace("global_map shape: row:{}x col:{}, agent_map shape: row:{}x col:{}", global_map->rows(),
                 global_map->cols(), agent_map->rows(), agent_map->cols());
+  //  current map is known, and global_map is unknown
   return cv::countNonZero((mat_global == UNKNOWN) & (mat_update != UNKNOWN));
 }
 float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *exploration_map)

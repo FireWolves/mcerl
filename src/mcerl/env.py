@@ -116,6 +116,8 @@ class Env:
         self,
         grid_map: npt.NDArray[np.uint8],
         agent_poses: Collection[tuple[int, int]] | None = None,
+        *,
+        return_maps: bool = False,
     ) -> dict[str, Any]:
         """
         Resets the environment to its initial state.
@@ -145,9 +147,19 @@ class Env:
 
         data = self._env.reset(mcerl.GridMap(grid_map), list(agent_poses))
 
-        return self.unwrap_data(data)
+        data = self.unwrap_data(data)
+        curr_agent = data["info"]["agent_id"]
+        if return_maps:
+            data["observation"]["global_map"] = self.global_map()
+            data["observation"]["agent_map"] = self.agent_map(curr_agent)
+        return data
 
-    def step(self, agent: int, action: int) -> dict[str, Any]:
+    def step(
+        self,
+        frame_data: dict[str, Any],
+        *,
+        return_maps: bool = False,
+    ) -> dict[str, Any]:
         """
         Performs a step in the environment until next agent.
 
@@ -159,8 +171,15 @@ class Env:
             dict[str, Any]: The data obtained from the environment after the step.
 
         """
+        agent = frame_data["action_agent_id"]
+        action = frame_data["action"]
         data = self._env.step(agent, action)
-        return self.unwrap_data(data)
+        data = self.unwrap_data(data)
+        curr_agent = data["info"]["agent_id"]
+        if return_maps:
+            data["observation"]["global_map"] = self.global_map()
+            data["observation"]["agent_map"] = self.agent_map(curr_agent)
+        return data
 
     def unwrap_data(self, data: tuple[Any]) -> dict[str, Any]:
         """
@@ -191,6 +210,7 @@ class Env:
                 for frontier_point in obs.frontier_points
             ],
             "pos": obs.agent_poses,
+            "target_pos": obs.agent_targets,
         }
         unwrapped_data["reward"] = {
             "exploration_reward": reward.exploration_reward,
@@ -257,7 +277,10 @@ class Env:
         return np.array(self._env.agent_map(agent_idx), copy=False)
 
     def get_valid_spawn_poses(
-        self, grid_map: npt.NDArray[np.uint8], num_poses: int
+        self,
+        grid_map: npt.NDArray[np.uint8],
+        num_poses: int,
+        valid_radius: int = 3,
     ) -> Collection[tuple[int, int]]:
         """
         Gets valid spawn poses for the agents.
@@ -270,13 +293,30 @@ class Env:
             Collection[tuple[int, int]]: The valid spawn poses.
 
         """
+
+        def check_around(x, y, grid_map, radius=3, valid_value=255):
+            """
+            check if the area around the point is valid
+            """
+            rows = grid_map.shape[0]
+            cols = grid_map.shape[1]
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    if (
+                        0 <= x + i < cols
+                        and 0 <= y + j < rows
+                        and grid_map[y + j, x + i] != valid_value
+                    ):
+                        return False
+            return True
+
         rows = grid_map.shape[0]
         cols = grid_map.shape[1]
         valid_poses = []
         rng = np.random.default_rng()
         while len(valid_poses) < num_poses:
-            y = rng.integers(rows).item()
-            x = rng.integers(cols).item()
-            if grid_map[y, x] == 255:
+            y = rng.integers(rows).item()  # type: ignore  # noqa: PGH003
+            x = rng.integers(cols).item()  # type: ignore  # noqa: PGH003
+            if check_around(x, y, grid_map, radius=valid_radius):
                 valid_poses.append((x, y))
         return valid_poses

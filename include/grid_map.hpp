@@ -23,17 +23,11 @@ namespace Env
 struct GridMap
 {
   GridMap(int width, int height) : width_(width), height_(height) { data_ = new uint8_t[width * height]; }
-  GridMap(uint8_t *data, int width, int height, bool copy = true) : width_(width), height_(height)
+  GridMap(uint8_t *data, int width, int height) : width_(width), height_(height)
   {
-    if (copy)
-    {
-      this->data_ = new uint8_t[width * height];
-      std::copy(data, data + width * height, this->data_);
-    }
-    else
-    {
-      this->data_ = data;
-    }
+
+    this->data_ = new uint8_t[width * height];
+    std::copy(data, data + width * height, this->data_);
   }
   GridMap(const GridMap &other) : width_(other.width_), height_(other.height_)
   {

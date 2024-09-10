@@ -63,20 +63,27 @@ FrameData Environment::reset(GridMap env_map, std::vector<Coord> poses)
 
   this->init(env_map, poses);
 
-  auto next_act_agent = get_next_act_agent();
-  spdlog::info("next act agent: {}", next_act_agent);
+  auto agent_id = get_next_act_agent();
+  spdlog::info("next act agent: {}", agent_id);
 
-  if (next_act_agent == -1)
+  if (agent_id == -1)
   {
-    next_act_agent = 0;
+    agent_id = 0;
     spdlog::info("no agent requires a new target, returning frame data for agent 0");
   }
   else
   {
-    spdlog::info("agent {} requires a new target", next_act_agent);
+    spdlog::info("agent {} requires a new target", agent_id);
   }
 
-  return get_frame_data(next_act_agent);
+  spdlog::trace("manually updating map for all agents and merge map to global map");
+  for (auto &agent : agents_)
+  {
+    Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
+    Alg::map_merge(global_map_, agent.state.map.get());
+  }
+
+  return get_frame_data(agent_id);
 }
 
 FrameData Environment::step(int agent_id, Action target_index)
@@ -107,7 +114,8 @@ FrameData Environment::step(int agent_id, Action target_index)
 
 /**
  * @brief set the action for the agent
- * @note  this will clear the frontier points and rewards, compute the path and set the target index
+ * @note  this will clear the frontier points and rewards, compute the path and set the target index. We also restore a
+ * copy of the agent map for calculating the new explored pixels
  * @param agent_id  the id of the agent
  * @param target_idx  the index of the target frontier point
  */
@@ -170,18 +178,17 @@ FrameData Environment::get_frame_data(int agent_id)
   info.agent_id = agent.info.id;
   info.step_cnt = step_count_;
   info.delta_time = agent.info.delta_time;
+  reward.time_step_reward = info.delta_time;
   step_count_++;
   info.agent_step_cnt = agent.info.step_count;
   agent.info.step_count++;
 
-  // manually update the map
-  spdlog::trace("updating map");
-  Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
-
   spdlog::trace("calculating new explored pixels");
-  auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
-  agent.reward.explored_pixels += new_explored_pixels;
-  reward.exploration_reward = agent.reward.explored_pixels;
+  auto explored_pixels = Alg::calculate_explored_pixels(global_map_, agent.state.map.get());
+  agent.reward.new_explored_pixels += explored_pixels - agent.info.explored_pixels;
+  agent.info.explored_pixels = explored_pixels;
+  reward.exploration_reward = agent.reward.new_explored_pixels;
+  info.agent_explored_pixels = agent.info.explored_pixels;
 
   spdlog::trace("detecting frontiers");
   auto &&frontiers =
@@ -204,11 +211,18 @@ FrameData Environment::get_frame_data(int agent_id)
   }
 
   spdlog::trace("getting agent poses");
-  for (auto &i : agents_)
+  for (auto &agent : agents_)
   {
-    observation.agent_poses.push_back(i.state.pos);
+    observation.agent_poses.push_back(agent.state.pos);
+    if (agent.action.target_idx != -1)
+      observation.agent_targets.push_back(agent.action.target_pos);
+    else
+    {
+      observation.agent_targets.push_back(Coord(0, 0));
+    }
   }
   std::swap(observation.agent_poses[0], observation.agent_poses[agent_id]);
+  std::swap(observation.agent_targets[0], observation.agent_targets[agent_id]);
 
   spdlog::trace("merging map to global map");
   Alg::map_merge(global_map_, agent.state.map.get());
@@ -271,10 +285,11 @@ int Environment::step_once()
       spdlog::trace("updating map");
       Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
 
-      auto new_explored_pixels = Alg::calculate_new_explored_pixels(global_map_, agent.state.map.get());
-      spdlog::info("new explored pixels: {}", new_explored_pixels);
-      agent.reward.explored_pixels += new_explored_pixels;
+      auto explored_pixels = Alg::calculate_explored_pixels(global_map_, agent.state.map.get());
+      agent.reward.new_explored_pixels += explored_pixels - agent.info.explored_pixels;
+      agent.info.explored_pixels = explored_pixels;
       agent.info.delta_time++;
+      spdlog::info("explored pixels: {},new explored pixels: {}", explored_pixels, agent.reward.new_explored_pixels);
 
       spdlog::trace("merging map to global map");
       Alg::map_merge(global_map_, agent.state.map.get());
