@@ -5,6 +5,7 @@ from typing import Any, Callable, Collection
 
 import numpy as np
 import tensordict
+import torch
 import tqdm
 from tensordict import LazyStackedTensorDict
 
@@ -114,24 +115,25 @@ def single_env_rollout(
     Returns:
         List[List[dict[str,Any]]]: A list of trajectories.
     """
-    trajectories = []
-    frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
-    trajectories.append(frame_data)
-    while True:
-        agent_id = frame_data["info"]["agent_id"]
-        frame_data["action_agent_id"] = agent_id
-        # if the agent is done, we set the action to 0 to wait other agent to finish
-        if frame_data["done"]:
-            frame_data["action"] = 0
-        else:
-            frame_data = policy(frame_data)
-        frame_data = env.step(frame_data, return_maps=return_maps)
+    with torch.no_grad():
+        trajectories = []
+        frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
         trajectories.append(frame_data)
-        if env.done() is True:
-            break
-    rollouts = split_trajectories(trajectories)
-    rollouts = [pad_trajectory(rollout) for rollout in rollouts]
-    rollouts = [refine_trajectory(rollout) for rollout in rollouts]
+        while True:
+            agent_id = frame_data["info"]["agent_id"]
+            frame_data["action_agent_id"] = agent_id
+            # if the agent is done, we set the action to 0 to wait other agent to finish
+            if frame_data["done"]:
+                frame_data["action"] = 0
+            else:
+                frame_data = policy(frame_data)
+            frame_data = env.step(frame_data, return_maps=return_maps)
+            trajectories.append(frame_data)
+            if env.done() is True:
+                break
+        rollouts = split_trajectories(trajectories)
+        rollouts = [pad_trajectory(rollout) for rollout in rollouts]
+        rollouts = [refine_trajectory(rollout) for rollout in rollouts]
     return rollouts  # noqa:  RET504
 
 
@@ -149,7 +151,7 @@ def multi_threaded_rollout(
     Perform a multi-threaded rollout.
     Args:
         env (Callable[..., mcerl.Environment]): The environment instance function.
-        policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action.
+        policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action and state value (if critic is used).
         grid_map (np.ndarray): The grid map.
         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents, if None, the agents are placed randomly.
         num_threads (int): The number of threads to use.

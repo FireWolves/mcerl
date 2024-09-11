@@ -7,20 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 
 
-class ActorCritic(nn.Module):
-    def __init__(
-        self,
-    ):
-        super().__init__()
-
-    def actor(self, **kwargs):
-        raise NotImplementedError
-
-    def critic(self, **kwargs):
-        raise NotImplementedError
-
-
-class Actor:
+class Actor(nn.Module):
     def __init__(
         self,
         *,
@@ -41,23 +28,23 @@ class Actor:
         return self._policy_network
 
     def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
-        with torch.no_grad():
-            frame_data = self._pre_forward(frame_data)
-            pred = self._policy_network(
-                frame_data["observation"]["graph"].x,
-                frame_data["observation"]["graph"].edge_index,
-                frame_data["observation"]["graph"].batch,
-            )
-            probabilities = F.softmax(pred, dim=0)
-            if probabilities.numel() == 1:
-                action_index = torch.tensor([0])
-                log_prob = torch.tensor([0.0])
-            else:
-                action_index = torch.multinomial(probabilities.squeeze(), 1)
-                log_prob = torch.log(probabilities[action_index])
-            frame_data["action"] = action_index
-            frame_data["log_prob"] = log_prob
+        frame_data = self._pre_forward(frame_data)
+        pred = self._policy_network(
+            frame_data["observation"]["graph"].x,
+            frame_data["observation"]["graph"].edge_index,
+            frame_data["observation"]["graph"].batch,
+        )
+        probabilities = F.softmax(pred, dim=0)
+        if probabilities.numel() == 1:
+            action_index = torch.tensor([0])
+            log_prob = torch.tensor([0.0])
+        else:
+            action_index = torch.multinomial(probabilities.squeeze(), 1)
+            log_prob = torch.log(probabilities[action_index])
+        frame_data["action"] = action_index
+        frame_data["log_prob"] = log_prob
         return frame_data
+
 
     __call__ = forward
 
@@ -83,14 +70,85 @@ class Critic:
         return self._value_network
 
     def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
-        with torch.no_grad():
-            frame_data = self._pre_forward(frame_data)
-            value = self._value_network(
-                frame_data["observation"]["graph"].x,
-                frame_data["observation"]["graph"].edge_index,
-                frame_data["observation"]["graph"].batch,
-            )
-            frame_data["value"] = value
+        frame_data = self._pre_forward(frame_data)
+        value = self._value_network(
+            frame_data["observation"]["graph"].x,
+            frame_data["observation"]["graph"].edge_index,
+            frame_data["observation"]["graph"].batch,
+        )
+        frame_data["value"] = value
         return frame_data
+
+    __call__ = forward
+
+
+class ActorCritic(nn.Module):
+    def __init__(
+        self,
+        actor: Actor,
+        critic: Critic,
+        *,
+        forward_preprocess: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        forward_actor: bool = True,
+        forward_critic: bool = True,
+    ):
+        super().__init__()
+        self._actor = actor
+        self._critic = critic
+        self._forward_actor = forward_actor
+        self._forward_critic = forward_critic
+        self._forward_preprocess = forward_preprocess
+
+    @property
+    def actor(self):
+        return self._actor
+
+    @property
+    def critic(self):
+        return self._critic
+
+    def forward_actor(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        return self._actor(frame_data)
+
+    def forward_critic(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        return self._critic(frame_data)
+
+    def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        frame_data = self._pre_forward(frame_data)
+        if self._forward_actor:
+            frame_data = self._actor(frame_data)
+        if self._forward_critic:
+            frame_data = self._critic(frame_data)
+        return frame_data
+
+    def _pre_forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        if self._forward_preprocess is not None:
+            frame_data = self._forward_preprocess(frame_data)
+        if self.actor._forward_preprocess is not None:
+            frame_data = self.actor._forward_preprocess(frame_data)
+        if self.critic._forward_preprocess is not None:
+            frame_data = self.critic._forward_preprocess(frame_data)
+        return frame_data
+
+    __call__ = forward
+
+
+class GAE(nn.Module):
+    def __init__(self, *, gamma: float, lmbda: float):
+        super().__init__()
+        self._gamma = gamma
+        self._lambda = lmbda
+
+    def forward(self, rollout: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        gae = 0
+        for i in reversed(range(len(rollout))):
+            reward = rollout[i]["next"]["reward"]["reward"]
+            value = rollout[i]["value"]
+            next_value = rollout[i]["next"]["value"]
+            next_done = rollout[i]["next"]["done"]
+            delta = reward + self._gamma * next_value * (1.0 - next_done) - value
+            gae = delta + self._gamma * self._lambda * (1.0 - next_done) * gae
+            rollout[i]["advantage"] = gae
+        return rollout
 
     __call__ = forward
