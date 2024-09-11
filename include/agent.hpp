@@ -58,7 +58,7 @@ struct AgentInfo
   float exploration_rate;
   int explored_pixels;
   std::shared_ptr<GridMap> env_map;
-  void reset() { delta_time = 0, exploration_rate = 0.0; }
+  void reset() { delta_time = 0; }
   void reset(int id, int sensor_range, int num_rays, int max_steps)
   {
     reset();
@@ -69,6 +69,7 @@ struct AgentInfo
     this->step_count = 0;
     this->failed_attempts = 0;
     this->explored_pixels = 0;
+    this->exploration_rate = 0;
   }
   void reset(int id, int sensor_range, int num_rays, int max_steps, std::shared_ptr<GridMap> env_map)
   {

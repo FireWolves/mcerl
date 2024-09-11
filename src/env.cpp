@@ -139,7 +139,7 @@ void Environment::set_action(int agent_id, Action target_idx)
 
   spdlog::info("computing path");
   agent.state.executing_path =
-      std::make_unique<Path>(Alg::a_star(global_map_.get(), agent.state.pos, target_frontier.pos));
+      std::make_unique<Path>(Alg::a_star(agent.state.map.get(), agent.state.pos, target_frontier.pos));
   if (agent.state.executing_path->empty())
   {
     spdlog::info("path is empty");
@@ -184,11 +184,14 @@ FrameData Environment::get_frame_data(int agent_id)
   agent.info.step_count++;
 
   spdlog::trace("calculating new explored pixels");
-  auto explored_pixels = Alg::calculate_explored_pixels(global_map_, agent.state.map.get());
-  agent.reward.new_explored_pixels += explored_pixels - agent.info.explored_pixels;
-  agent.info.explored_pixels = explored_pixels;
+  auto valid_explored_pixels = Alg::calculate_valid_explored_pixels(global_map_, agent.state.map.get());
+  agent.reward.new_explored_pixels += valid_explored_pixels;
   reward.exploration_reward = agent.reward.new_explored_pixels;
+
+  agent.info.explored_pixels = Alg::count_pixels(agent.state.map.get(), UNKNOWN, true);
   info.agent_explored_pixels = agent.info.explored_pixels;
+  spdlog::trace("all explored pixels: {}, all new explored pixels: {}", info.agent_explored_pixels,
+                reward.exploration_reward);
 
   spdlog::trace("detecting frontiers");
   auto &&frontiers =
@@ -197,7 +200,8 @@ FrameData Environment::get_frame_data(int agent_id)
 
   std::vector<FrontierPoint> valid_frontiers;
   for (auto &frontier : frontiers)
-    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4))
+    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4, true,
+                               agent.state.map.get(), agent.state.pos))
       valid_frontiers.push_back(frontier);
   spdlog::debug("valid frontiers size: {}", valid_frontiers.size());
   agent.state.frontier_points = valid_frontiers;
@@ -208,6 +212,7 @@ FrameData Environment::get_frame_data(int agent_id)
     spdlog::info("agent {} done", agent_id);
     agent.done.done = true;
     done = true;
+    // this->is_done_ = true;
   }
 
   spdlog::trace("getting agent poses");
@@ -237,6 +242,8 @@ FrameData Environment::get_frame_data(int agent_id)
   {
     spdlog::info("global exploration rate reached threshold");
     agent.done.done = true;
+    done = true;
+    this->is_done_ = true;
   }
 
   return std::move(std::make_tuple(observation, reward, done, info));
@@ -266,6 +273,7 @@ int Environment::step_once()
             agents_.end())
         {
           spdlog::info("all agents done");
+          this->is_done_ = true;
           return -1;
         }
         continue;
@@ -285,11 +293,12 @@ int Environment::step_once()
       spdlog::trace("updating map");
       Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
 
-      auto explored_pixels = Alg::calculate_explored_pixels(global_map_, agent.state.map.get());
-      agent.reward.new_explored_pixels += explored_pixels - agent.info.explored_pixels;
-      agent.info.explored_pixels = explored_pixels;
+      auto valid_explored_pixels = Alg::calculate_valid_explored_pixels(global_map_, agent.state.map.get());
+      agent.reward.new_explored_pixels += valid_explored_pixels;
+      agent.info.explored_pixels = Alg::count_pixels(agent.state.map.get(), UNKNOWN, true);
       agent.info.delta_time++;
-      spdlog::info("explored pixels: {},new explored pixels: {}", explored_pixels, agent.reward.new_explored_pixels);
+      spdlog::info("explored pixels: {} ,new explored pixels: {},all new explored pixels: {}",
+                   agent.info.explored_pixels, valid_explored_pixels, agent.reward.new_explored_pixels);
 
       spdlog::trace("merging map to global map");
       Alg::map_merge(global_map_, agent.state.map.get());

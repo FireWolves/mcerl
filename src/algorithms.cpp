@@ -219,14 +219,44 @@ Coord get_surrogate_target(Coord target, int range, GridMap *exploration_map)
   return target;
 }
 
-Path a_star(GridMap *exploration_map, Coord start, Coord end)
+Path direct_path(Coord start, Coord end)
 {
-  end = get_surrogate_target(end, 5, exploration_map);
+  Path path;
+  int dx = end.x - start.x;
+  int dy = end.y - start.y;
+  int steps = std::max(std::abs(dx), std::abs(dy));
+  int ortho_steps = std::min(std::abs(dx), std::abs(dy));
+  for (int i = 0; i < ortho_steps; i++)
+  {
+    path.push_back({start.x + i * sgn(dx), start.y + i * sgn(dy)});
+  }
+  for (int i = ortho_steps; i < steps; i++)
+  {
+    if (std::abs(dx) > std::abs(dy))
+      path.push_back({start.x + i * sgn(dx), start.y + ortho_steps * sgn(dy)});
+    else
+      path.push_back({start.x + ortho_steps * sgn(dx), start.y + i * sgn(dy)});
+  }
+  path.push_back(end);
+  return path;
+}
+
+Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_range)
+{
+  end = get_surrogate_target(end, tolerance_range, exploration_map);
   spdlog::debug("start: ({}, {}), end: ({}, {})", start.x, start.y, end.x, end.y);
   if ((*exploration_map)(end.x, end.y) != FREE)
   {
     spdlog::warn("Target is not reachable");
     return {};
+  }
+  if (cv::norm(start - end) < tolerance_range)
+  {
+    spdlog::debug("direct path. ");
+    auto path = direct_path(start, end);
+    path.insert(path.begin(), start);
+    path.push_back(end);
+    return path;
   }
 
   // open_set: 未访问的节点 close_set: 已访问的节点
@@ -250,15 +280,42 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end)
     open_set.erase(current_node_itr);
     auto current_node_ptr = &(*itr);
     // 如果当前节点是目标节点, 则返回路径
-    if (auto node_ptr = current_node_ptr; current_node_ptr->pos == end)
+    if (auto node_ptr = current_node_ptr; cv::norm(current_node_ptr->pos - end) < tolerance_range)
     {
+      spdlog::trace("Path found, reconstructing path");
       Path path;
       while (node_ptr->parent != nullptr)
       {
         path.push_back(node_ptr->pos);
         node_ptr = node_ptr->parent;
       }
+      spdlog::trace("reversing path");
+
       std::reverse(path.begin(), path.end());
+      std::stringstream ss;
+      for (auto &&p : path)
+      {
+        ss << "(" << p.x << "," << p.y << ") ";
+      }
+      spdlog::trace("path: {}", ss.str());
+      if (path.back() != end)
+      {
+        spdlog::trace("adding end direct path");
+        auto direct = direct_path(current_node_ptr->pos, end);
+        std::stringstream s;
+        for (auto &&p : direct)
+        {
+          s << "(" << p.x << "," << p.y << ") ";
+        }
+        spdlog::trace("direct path: {}", s.str());
+        path.insert(path.end(), direct.begin() + 1, direct.end());
+      }
+      std::stringstream s;
+      for (auto &&p : path)
+      {
+        s << "(" << p.x << "," << p.y << ") ";
+      }
+      spdlog::trace("Path reconstructed. final path: {}", s.str());
       return path;
     }
     // 获取当前节点的子节点
@@ -325,31 +382,48 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
   mat_global.setTo(OCCUPIED, mat_update == OCCUPIED);
   mat_global.setTo(FREE, (mat_update == FREE) & (mat_global != OCCUPIED));
 }
-int calculate_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)
+int calculate_valid_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map)
 {
   spdlog::trace("calculate_new_explored_pixels");
   auto &&mat_global = cv::Mat(global_map->rows(), global_map->cols(), CV_8UC1, global_map->data());
-  auto &&mat_update = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
-  spdlog::trace("mat_global shape: row:{}x col:{}, mat_update shape: row:{}x col:{}", mat_global.rows, mat_global.cols,
-                mat_update.rows, mat_update.cols);
-  spdlog::trace("global_map shape: row:{}x col:{}, agent_map shape: row:{}x col:{}", global_map->rows(),
-                global_map->cols(), agent_map->rows(), agent_map->cols());
+  auto &&mat_agent = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
   //  current map is known, and global_map is unknown
-  return cv::countNonZero((mat_global == UNKNOWN) & (mat_update != UNKNOWN));
+  return cv::countNonZero((mat_global == UNKNOWN) & (mat_agent != UNKNOWN));
 }
+
+int count_pixels(Env::GridMap *map, uint8_t value, bool exclude_value)
+{
+  auto &&mat = cv::Mat(map->rows(), map->cols(), CV_8UC1, map->data());
+  if (exclude_value)
+  {
+    return cv::countNonZero(mat != value);
+  }
+  return cv::countNonZero(mat == value);
+}
+
 float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *exploration_map)
 {
-  auto &&mat_env = cv::Mat(env_map->rows(), env_map->cols(), CV_8UC1, env_map->data());
-  auto &&mat_exploration = cv::Mat(exploration_map->rows(), exploration_map->cols(), CV_8UC1, exploration_map->data());
-  return static_cast<float>(cv::countNonZero(mat_exploration == FREE)) / cv::countNonZero(mat_env == FREE);
+  return static_cast<float>(count_pixels(exploration_map, FREE, false)) /
+         static_cast<float>(count_pixels(env_map.get(), FREE, false));
 }
 
 bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int radius,
-                       int threshold)
+                       int threshold, bool check_reachability, Env::GridMap *exploration_map, Coord agent_pos)
 {
   auto unexplored_pixels = calculate_surrounding_unexplored_pixels(global_map.get(), frontier_point.pos, radius);
   if (unexplored_pixels < threshold)
     return false;
+  if (check_reachability)
+  {
+    if (!exploration_map)
+    {
+      return false;
+    }
+    if (a_star(exploration_map, agent_pos, frontier_point.pos).empty())
+    {
+      return false;
+    }
+  }
   return true;
 }
 

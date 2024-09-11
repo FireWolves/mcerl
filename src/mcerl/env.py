@@ -202,6 +202,7 @@ class Env:
             "agent_exploration_rate": info.agent_exploration_rate,
             "global_exploration_rate": info.global_exploration_rate,
             "delta_time": info.delta_time,
+            "agent_explored_pixels": info.agent_explored_pixels,
         }
         unwrapped_data["done"] = done
         unwrapped_data["observation"] = {

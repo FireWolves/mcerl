@@ -2,7 +2,7 @@
 # policies up to CMake 3.27
 cmake_minimum_required(VERSION 3.15...3.27)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 # Scikit-build-core sets these values for you, or you can just hard-code the
 # name and version.

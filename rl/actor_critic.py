@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 import torch
 import torch.nn.functional as F
-from sympy import sequence
 from torch import nn
 from torch.nn import (
     BatchNorm1d,
@@ -16,7 +15,7 @@ from torch.nn import (
     TransformerEncoderLayer,
 )
 from torch.nn.modules import activation
-from torch_geometric.nn import GCNConv, GINConv, global_add_pool, global_mean_pool
+from torch_geometric.nn import GINConv, global_add_pool
 
 Activation = Callable[..., Module]
 
@@ -94,107 +93,6 @@ class GINNet(nn.Module):
         return torch.cat([global_add_pool(h, batch=batch) for h in [h1, h2, h3]], dim=1)
 
 
-# class DoubleGraphActorCritic(ActorCriticBase):
-#     def __init__(
-#         self,
-#         *,
-#         common_feature_dim_agent: int,
-#         common_hidden_dim_agent: int,
-#         common_activation_agent: str,
-#         common_feature_dim_target: int,
-#         common_hidden_dim_target: int,
-#         common_activation_target: str,
-#         common_num_attention_heads: int,
-#         common_num_transformer_layers: int,
-#         action_head_hidden_dim: int,
-#         action_head_output_dim: int,
-#         action_head_activation: str,
-#         value_head_hidden_dim: int,
-#         value_head_activation: str,
-#     ):
-#         super().__init__()
-#         self.agent_encoder = GINNet(
-#             input_dim=common_feature_dim_agent,
-#             hidden_dim=common_hidden_dim_agent,
-#             activation=common_activation_agent,
-#         )
-#         self.target_encoder = GINNet(
-#             input_dim=common_feature_dim_target,
-#             hidden_dim=common_hidden_dim_target,
-#             activation=common_activation_target,
-#         )
-
-#         transformer_layer = TransformerEncoderLayer(
-#             d_model=common_hidden_dim_target * 3, nhead=common_num_attention_heads
-#         )
-#         self.transformer_encoder = TransformerEncoder(
-#             transformer_layer, num_layers=common_num_transformer_layers
-#         )
-
-#         self.action_head = nn.Sequential(
-#             nn.Linear(common_hidden_dim_agent * 3, action_head_hidden_dim),
-#             get_activation_fn(action_head_activation)(),
-#             nn.Linear(action_head_hidden_dim, action_head_output_dim),
-#         )
-#         self.value_head = nn.Sequential(
-#             nn.Linear(common_hidden_dim_target * 3, value_head_hidden_dim),
-#             get_activation_fn(value_head_activation)(),
-#             nn.Linear(value_head_hidden_dim, 1),
-#         )
-
-#     def actor(self, agent_graph, target_graph, return_logits=True):
-#         # 编码 agent graph
-#         agent_features = self.agent_encoder(agent_graph)
-
-#         # 编码 target graph
-#         target_features = self.target_encoder(target_graph)
-
-#         # 将 agent 和 target 特征拼接
-#         combined_features = torch.cat([agent_features, target_features], dim=-1)
-
-#         # 通过 transformer 层
-#         transformed_features = self.transformer_encoder(combined_features)
-
-#         # 提取 agent 相关的特征
-#         agent_transformed = transformed_features[:, : agent_features.size(1), :]
-
-#         # 平均池化得到全局特征
-#         global_agent_features = torch.mean(agent_transformed, dim=1)
-
-#         # 通过 action head 得到动作概率分布
-#         logits = self.action_head(global_agent_features)
-#         probs = F.softmax(logits, dim=-1)
-#         action = torch.multinomial(probs, num_samples=1)
-#         log_prob = F.log_softmax(logits, dim=-1).gather(1, action)
-#         if return_logits:
-#             return action.squeeze(-1), log_prob.squeeze(-1), logits
-#         return action.squeeze(-1), log_prob.squeeze(-1)
-
-#     def critic_operator(self, agent_graph, target_graph):
-#         # 编码 agent graph
-#         agent_features = self.agent_encoder(agent_graph)
-
-#         # 编码 target graph
-#         target_features = self.target_encoder(target_graph)
-
-#         # 将 agent 和 target 特征拼接
-#         combined_features = torch.cat([agent_features, target_features], dim=-1)
-
-#         # 通过 transformer 层
-#         transformed_features = self.transformer_encoder(combined_features)
-
-#         # 提取 target 相关的特征
-#         target_transformed = transformed_features[:, agent_features.size(1) :, :]
-
-#         # 平均池化得到全局特征
-#         global_target_features = torch.mean(target_transformed, dim=1)
-
-#         # 通过 value head 得到价值估计
-#         value = self.value_head(global_target_features)
-
-#         return value.squeeze(-1)
-
-
 class GINPolicyNetwork(torch.nn.Module):
     def __init__(
         self,
@@ -257,11 +155,15 @@ class Actor:
         self,
         *,
         policy_network: torch.nn.Module,
+        forward_preprocess: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
         super().__init__()
         self._policy_network = policy_network
+        self._forward_preprocess = forward_preprocess
 
-    def _pre_forward(self, frame_data):
+    def _pre_forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        if self._forward_preprocess is not None:
+            frame_data = self._forward_preprocess(frame_data)
         return frame_data
 
     @property
@@ -277,8 +179,48 @@ class Actor:
                 frame_data["observation"]["graph"].batch,
             )
             probabilities = F.softmax(pred, dim=0)
-            action_index = torch.multinomial(probabilities.squeeze(), 1)
-            log_prob = torch.log(probabilities[action_index])
+            if(probabilities.numel() == 1):
+                action_index = torch.tensor([0])
+                log_prob = torch.tensor([0.0])
+            else:
+                action_index = torch.multinomial(probabilities.squeeze(), 1)
+                log_prob = torch.log(probabilities[action_index])
             frame_data["action"] = action_index
             frame_data["log_prob"] = log_prob
         return frame_data
+
+    __call__ = forward
+
+
+class Critic:
+    def __init__(
+        self,
+        *,
+        value_network: torch.nn.Module,
+        forward_preprocess: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ):
+        super().__init__()
+        self._value_network = value_network
+        self._forward_preprocess = forward_preprocess
+
+    def _pre_forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        if self._forward_preprocess is not None:
+            frame_data = self._forward_preprocess(frame_data)
+        return frame_data
+
+    @property
+    def value_network(self):
+        return self._value_network
+
+    def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+        with torch.no_grad():
+            frame_data = self._pre_forward(frame_data)
+            value = self._value_network(
+                frame_data["observation"]["graph"].x,
+                frame_data["observation"]["graph"].edge_index,
+                frame_data["observation"]["graph"].batch,
+            )
+            frame_data["value"] = value
+        return frame_data
+
+    __call__ = forward

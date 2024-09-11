@@ -104,11 +104,13 @@ def single_env_rollout(
 ) -> list[list[dict[str, Any]]]:
     """
     Perform a single environment rollout.
+    after the rollout, we split the trajectory into agent-wise trajectories and pad them, then refine them.
     Args:
         env (Env): The environment object.
         grid_map (np.ndarray): The grid map.
         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents. Defaults to None. If None, the agents are placed randomly.
         policy (Callable[[dict], int]): The policy function that takes in an observation and returns an action index. Defaults to random_policy.
+        return_maps (bool): Whether to return the maps in the trajectory. Defaults to True.
     Returns:
         List[List[dict[str,Any]]]: A list of trajectories.
     """
@@ -118,7 +120,11 @@ def single_env_rollout(
     while True:
         agent_id = frame_data["info"]["agent_id"]
         frame_data["action_agent_id"] = agent_id
-        frame_data = policy(frame_data)
+        # if the agent is done, we set the action to 0 to wait other agent to finish
+        if frame_data["done"]:
+            frame_data["action"] = 0
+        else:
+            frame_data = policy(frame_data)
         frame_data = env.step(frame_data, return_maps=return_maps)
         trajectories.append(frame_data)
         if env.done() is True:
@@ -137,14 +143,15 @@ def multi_threaded_rollout(
     *,
     num_threads: int,
     epochs: int,
+    return_maps: bool = False,
 ) -> list[list[dict[str, Any]]]:
     """
     Perform a multi-threaded rollout.
     Args:
-        env (Callable[..., mcerl.Environment]): The environment class.
-        policy (Callable[[dict], int]): The policy function that takes in an observation and returns an action index.
+        env (Callable[..., mcerl.Environment]): The environment instance function.
+        policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action.
         grid_map (np.ndarray): The grid map.
-        agent_poses (Collection[tuple[int, int]]): The initial positions of the agents.
+        agent_poses (Collection[tuple[int, int]]): The initial positions of the agents, if None, the agents are placed randomly.
         num_threads (int): The number of threads to use.
         epochs (int): The number of epochs to run.
     Returns:
@@ -153,9 +160,14 @@ def multi_threaded_rollout(
 
     with ThreadPoolExecutor(max_workers=num_threads) as executor:
         futures = []
-        for _ in tqdm.tqdm(range(epochs), desc="Epochs"):
+        for _ in range(epochs):
             future = executor.submit(
-                single_env_rollout, env(), grid_map.copy(), policy, agent_poses
+                single_env_rollout,
+                env(),
+                grid_map.copy(),
+                policy,
+                agent_poses,
+                return_maps=return_maps,
             )
             futures.append(future)
         rollouts = []
