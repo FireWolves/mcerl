@@ -45,11 +45,10 @@ class Actor(nn.Module):
         frame_data["log_prob"] = log_prob
         return frame_data
 
-
     __call__ = forward
 
 
-class Critic:
+class Critic(nn.Module):
     def __init__(
         self,
         *,
@@ -76,7 +75,7 @@ class Critic:
             frame_data["observation"]["graph"].edge_index,
             frame_data["observation"]["graph"].batch,
         )
-        frame_data["value"] = value
+        frame_data.update({"value": value})
         return frame_data
 
     __call__ = forward
@@ -133,7 +132,7 @@ class ActorCritic(nn.Module):
     __call__ = forward
 
 
-class GAE(nn.Module):
+class GAE:
     def __init__(self, *, gamma: float, lmbda: float):
         super().__init__()
         self._gamma = gamma
@@ -142,7 +141,7 @@ class GAE(nn.Module):
     def forward(self, rollout: list[dict[str, Any]]) -> list[dict[str, Any]]:
         gae = 0
         for i in reversed(range(len(rollout))):
-            reward = rollout[i]["next"]["reward"]["reward"]
+            reward = rollout[i]["next"]["reward"]["total_reward"]
             value = rollout[i]["value"]
             next_value = rollout[i]["next"]["value"]
             next_done = rollout[i]["next"]["done"]

@@ -31,7 +31,7 @@ def get_activation_fn(act: str) -> Activation:
     raise ValueError(msg)
 
 
-class GINNetwork(torch.nn.Module):
+class GINPolicyNetwork(torch.nn.Module):
     def __init__(
         self,
         *,
@@ -85,4 +85,23 @@ class GINNetwork(torch.nn.Module):
         h = self.lin1(h_transformed).relu()
         h = F.dropout(h, p=0.5, training=self.training)
 
+        return self.lin2(h)
+class GINValueNetwork(torch.nn.Module):
+    def __init__(self, dim_h):
+        super().__init__()
+        nn1 = Sequential(Linear(5, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU())
+        self.conv1 = GINConv(nn1)
+        nn2 = Sequential(Linear(dim_h, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU())
+        self.conv2 = GINConv(nn2)
+        self.conv3 = GINConv(nn2)
+        self.lin1 = Linear(dim_h*3, dim_h*3)
+        self.lin2 = Linear(dim_h*3, 1)  # Output 1 value for regression
+
+    def forward(self, x, edge_index, batch):
+        h1 = self.conv1(x, edge_index).relu()
+        h2 = self.conv2(h1, edge_index).relu()
+        h3 = self.conv3(h2, edge_index).relu()
+        h = torch.cat([global_add_pool(h, batch) for h in [h1, h2, h3]], dim=1)
+        h = self.lin1(h).relu()
+        h = F.dropout(h, p=0.5, training=self.training)  # Added dropout before final layer
         return self.lin2(h)

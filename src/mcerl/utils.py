@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Any, Callable, Collection
 
 import numpy as np
@@ -29,6 +30,7 @@ def split_trajectories(trajectories) -> list[list[dict[str, Any]]]:
 
 def pad_trajectory(trajectory) -> list[dict[str, Any]]:
     """
+    TODO: I messy this up, need to refactor this
     In this environment, we won't get an observation when done is True.
     However, we need to pad the trajectories to stack them.
     use T-1's observation to pad T, it's ok because we never use this state (normally).
@@ -40,13 +42,17 @@ def pad_trajectory(trajectory) -> list[dict[str, Any]]:
     for i in range(len(trajectory)):
         trajectory_out.append(trajectory[i])
         if trajectory[i]["done"]:
-            trajectory_out[-1]["observation"] = trajectory_out[-2]["observation"]
             break
+    trajectory_out[-1]["done"] = True
+    trajectory_out[-1]["value"] = 0.0
     return trajectory_out
 
 
-def refine_trajectory(trajectory) -> list[dict[str, Any]]:
+def refine_trajectory(
+    trajectory, exclude_keys: Collection[str] = ("action", "log_prob")
+) -> list[dict[str, Any]]:
     """transform the trajectory
+    TODO: we need to use hard code to mark the keys to exclude, maybe we can use a more elegant way to do this
     (Obs_k,Info_k,Done_k Action_k, Reward_k-1)
     to
     (Obs_k, Info_k,Done_k, Action_k,
@@ -55,19 +61,22 @@ def refine_trajectory(trajectory) -> list[dict[str, Any]]:
     refined_trajectory = []
     for i in range(len(trajectory) - 1):
         refined_trajectory.append(
-            {
-                "observation": trajectory[i]["observation"],
-                "info": trajectory[i]["info"],
-                "done": trajectory[i]["done"],
-                "action": trajectory[i]["action"],
-                "next": {
-                    "reward": trajectory[i + 1]["reward"],
-                    "observation": trajectory[i + 1]["observation"],
-                    "info": trajectory[i + 1]["info"],
-                    "done": trajectory[i + 1]["done"],
-                },
-            }
+            deepcopy(
+                {
+                    **{
+                        key: value
+                        for key, value in trajectory[i].items()
+                        if key != "reward"
+                    },
+                    "next": {
+                        key: value
+                        for key, value in trajectory[i + 1].items()
+                        if key not in exclude_keys
+                    },
+                }
+            )
         )
+
     return refined_trajectory
 
 
@@ -101,6 +110,7 @@ def single_env_rollout(
     policy: Callable[[dict[str, Any]], dict[str, Any]] = random_policy,
     agent_poses: Collection[tuple[int, int]] | None = None,
     *,
+    env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     return_maps: bool = True,
 ) -> list[list[dict[str, Any]]]:
     """
@@ -118,19 +128,30 @@ def single_env_rollout(
     with torch.no_grad():
         trajectories = []
         frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
-        trajectories.append(frame_data)
+        if env_transform is not None:
+            frame_data = env_transform(frame_data)
         while True:
-            agent_id = frame_data["info"]["agent_id"]
-            frame_data["action_agent_id"] = agent_id
             # if the agent is done, we set the action to 0 to wait other agent to finish
-            if frame_data["done"]:
+            if (
+                frame_data["done"]
+                or len(frame_data["observation"]["frontier_points"]) == 0
+            ):
                 frame_data["action"] = 0
             else:
+                # otherwise, we use the policy to get the action
                 frame_data = policy(frame_data)
-            frame_data = env.step(frame_data, return_maps=return_maps)
+            # append the frame data with action to the trajectory
             trajectories.append(frame_data)
+            # step the environment
+            frame_data = env.step(frame_data, return_maps=return_maps)
+            # if the environment is done, we append the last frame data and break
             if env.done() is True:
+                trajectories.append(frame_data)
                 break
+            # if the environment is not done, and agent is not done, we transform the frame data
+            if env_transform is None or frame_data["done"]:
+                continue
+            frame_data = env_transform(frame_data)
         rollouts = split_trajectories(trajectories)
         rollouts = [pad_trajectory(rollout) for rollout in rollouts]
         rollouts = [refine_trajectory(rollout) for rollout in rollouts]
@@ -143,9 +164,10 @@ def multi_threaded_rollout(
     grid_map: np.ndarray,
     agent_poses: Collection[tuple[int, int]] | None = None,
     *,
+    return_maps: bool = False,
+    env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     num_threads: int,
     epochs: int,
-    return_maps: bool = False,
 ) -> list[list[dict[str, Any]]]:
     """
     Perform a multi-threaded rollout.
@@ -170,6 +192,7 @@ def multi_threaded_rollout(
                 policy,
                 agent_poses,
                 return_maps=return_maps,
+                env_transform=env_transform,
             )
             futures.append(future)
         rollouts = []

@@ -171,7 +171,7 @@ class Env:
             dict[str, Any]: The data obtained from the environment after the step.
 
         """
-        agent = frame_data["action_agent_id"]
+        agent = frame_data["info"]["agent_id"]
         action = frame_data["action"]
         data = self._env.step(agent, action)
         data = self.unwrap_data(data)

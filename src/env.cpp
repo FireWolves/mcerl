@@ -211,8 +211,6 @@ FrameData Environment::get_frame_data(int agent_id)
   {
     spdlog::info("agent {} done", agent_id);
     agent.done.done = true;
-    done = true;
-    // this->is_done_ = true;
   }
 
   spdlog::trace("getting agent poses");
@@ -242,9 +240,9 @@ FrameData Environment::get_frame_data(int agent_id)
   {
     spdlog::info("global exploration rate reached threshold");
     agent.done.done = true;
-    done = true;
     this->is_done_ = true;
   }
+  done = agent.done.done || this->is_done_;
 
   return std::move(std::make_tuple(observation, reward, done, info));
 }
@@ -270,7 +268,8 @@ int Environment::step_once()
       {
         spdlog::info("agent {} done, skip step.", agent.info.id);
         if (std::find_if(agents_.begin(), agents_.end(), [](const Agent &agent) { return agent.done.done != true; }) ==
-            agents_.end())
+                agents_.end() ||
+            this->is_done_)
         {
           spdlog::info("all agents done");
           this->is_done_ = true;
