@@ -200,7 +200,7 @@ FrameData Environment::get_frame_data(int agent_id)
 
   std::vector<FrontierPoint> valid_frontiers;
   for (auto &frontier : frontiers)
-    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4, true,
+    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4, false,
                                agent.state.map.get(), agent.state.pos))
       valid_frontiers.push_back(frontier);
   spdlog::debug("valid frontiers size: {}", valid_frontiers.size());

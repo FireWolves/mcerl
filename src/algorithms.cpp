@@ -364,21 +364,21 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
   //                    0   |  0  | <0> | <0>
   //                    127 |  0  | 127 | 255
   //                    255 |  0  |<255>| 255
-  if (!global_map)
-  {
-    throw std::invalid_argument("Null pointer passed to map_merge: global_map");
-  }
-  if (!agent_map)
-  {
-    throw std::invalid_argument("Null pointer passed to map_merge: agent_map");
-  }
+  // if (!global_map)
+  // {
+  //   throw std::invalid_argument("Null pointer passed to map_merge: global_map");
+  // }
+  // if (!agent_map)
+  // {
+  //   throw std::invalid_argument("Null pointer passed to map_merge: agent_map");
+  // }
   auto &&mat_global = cv::Mat(global_map->rows(), global_map->cols(), CV_8UC1, global_map->data());
   auto &&mat_update = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
   // 检查矩阵尺寸是否匹配
-  if (mat_global.size() != mat_update.size())
-  {
-    throw std::invalid_argument("Mismatched map sizes in map_merge");
-  }
+  // if (mat_global.size() != mat_update.size())
+  // {
+  //   throw std::invalid_argument("Mismatched map sizes in map_merge");
+  // }
   mat_global.setTo(OCCUPIED, mat_update == OCCUPIED);
   mat_global.setTo(FREE, (mat_update == FREE) & (mat_global != OCCUPIED));
 }
