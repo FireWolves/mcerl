@@ -37,13 +37,32 @@ class Actor(nn.Module):
         probabilities = F.softmax(pred, dim=0)
         if probabilities.numel() == 1:
             action_index = torch.tensor([0], device=pred.device)
-            log_prob = torch.tensor([0.0], device=pred.device).unsqueeze(0)
         else:
             action_index = torch.multinomial(probabilities.squeeze(), 1)
-            log_prob = torch.log(probabilities[action_index])
+        log_prob = torch.log(probabilities[action_index])
         frame_data["action"] = action_index
         frame_data["log_prob"] = log_prob
         return frame_data
+
+    def forward_parallel(self, graph, batch):
+        pred = self._policy_network(graph.x, graph.edge_index, graph.batch, masks=batch)
+        batches = int(batch.max().item()) + 1
+        for index in range(batches):
+            mask = batch == index
+            probabilities = F.softmax(pred[mask], dim=0)
+            if probabilities.numel() == 1:
+                action_index = torch.tensor([0], device=pred.device)
+            else:
+                action_index = torch.multinomial(probabilities.squeeze(), 1)
+            log_prob = torch.log(probabilities[action_index])
+            if index == 0:
+                actions = action_index
+                log_probs = log_prob
+            else:
+                actions = torch.cat((actions, action_index))
+                log_probs = torch.cat((log_probs, log_prob))
+
+        return actions, log_probs
 
     __call__ = forward
 
@@ -77,6 +96,15 @@ class Critic(nn.Module):
         )
         frame_data.update({"value": value})
         return frame_data
+
+    def forward_parallel(self, graph, batch):
+        value = self._value_network(
+            graph.x,
+            graph.edge_index,
+            graph.batch,
+            masks=batch,
+        )
+        return value
 
     __call__ = forward
 
@@ -125,6 +153,11 @@ class ActorCritic(nn.Module):
             frame_data = self._forward_preprocess(frame_data)
         return frame_data
 
+    def forward_parallel(self, graph, batch):
+        action_index, log_prob = self.actor.forward_parallel(graph, batch)
+        value = self.critic.forward_parallel(graph, batch)
+        return action_index, log_prob, value
+
     __call__ = forward
 
 
@@ -142,7 +175,9 @@ class GAE:
             next_value = rollout[i]["next"]["value"]
             next_done = rollout[i]["next"]["done"]
             delta = reward + self._gamma * next_value * (1.0 - next_done) - value
-            advantage = delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
+            advantage = (
+                delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
+            )
             rollout[i]["advantage"] = advantage
             rollout[i]["return"] = advantage + value
         return rollout

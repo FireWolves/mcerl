@@ -57,7 +57,7 @@ class GINPolicyNetwork(torch.nn.Module):
 
         # Transformer layer
         transformer_layer = TransformerEncoderLayer(
-            d_model=dim_h * 3, nhead=transformer_heads
+            d_model=dim_h * 3, nhead=transformer_heads, batch_first=True
         )
         self.transformer_encoder = TransformerEncoder(
             transformer_layer, num_layers=num_transformer_layers
@@ -67,7 +67,7 @@ class GINPolicyNetwork(torch.nn.Module):
         self.lin1 = Linear(dim_h * 3, dim_h * 3)
         self.lin2 = Linear(dim_h * 3, 1)  # Output 1 value for regression
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, *, masks=None):
         # x:nodes of all targets:[n_agents*n_targets,n_node_features ]
         # edge_index: [2, 2 * n_targets(n_subgraphs)*n_agents(n_nodes_in_subgraph)]
         # batch: [n_subgraphs]
@@ -78,14 +78,11 @@ class GINPolicyNetwork(torch.nn.Module):
         h2 = self.conv2(h1, edge_index).relu()
 
         h3 = self.conv3(h2, edge_index).relu()
-
         h = torch.cat([global_add_pool(h, batch) for h in [h1, h2, h3]], dim=1)
 
         # Transformer layer
-        h_transformed = self.transformer_encoder(h.unsqueeze(1)).squeeze(
-            1
-        )  # Assuming batch-first
-
+        h_transformed = self.transformer_encoder(h.unsqueeze(1))  # self-attention
+        h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
         h = F.dropout(h, p=0.5, training=self.training)
@@ -110,7 +107,7 @@ class GINValueNetwork(torch.nn.Module):
         self.conv2 = GINConv(nn2)
         self.conv3 = GINConv(nn2)
         transformer_layer = TransformerEncoderLayer(
-            d_model=dim_h * 3, nhead=transformer_heads
+            d_model=dim_h * 3, nhead=transformer_heads, batch_first=True
         )
         self.transformer_encoder = TransformerEncoder(
             transformer_layer, num_layers=num_transformer_layers
@@ -118,14 +115,23 @@ class GINValueNetwork(torch.nn.Module):
         self.lin1 = Linear(dim_h * 3, dim_h)
         self.lin2 = Linear(dim_h, 1)  # Output 1 value for regression
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, *, masks=None):
         h1 = self.conv1(x, edge_index).relu()
         h2 = self.conv2(h1, edge_index).relu()
         h3 = self.conv3(h2, edge_index).relu()
         h = torch.cat([global_add_pool(h, batch) for h in [h1, h2, h3]], dim=1)
-        # Transformer layer
-        h_transformed = self.transformer_encoder(h.unsqueeze(1)).squeeze(1)
-        h_transformed = h_transformed[-1, ...]
+
+        if masks is not None:
+            h = torch.nested.as_nested_tensor(
+                [h[masks == i] for i in range(int(masks.max().item()) + 1)]
+            )
+            if self.training:
+                h = torch.nested.to_padded_tensor(h, padding=0.0)
+
+        if len(h.shape)<3:
+            h = h.unsqueeze(0)
+        h_transformed = self.transformer_encoder(h)  # cross-attention
+        h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
         h = F.dropout(h, p=0.5, training=self.training)

@@ -8,6 +8,7 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_undirected
+from zmq import has
 
 
 def build_graphs(trajectory: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -69,15 +70,46 @@ def to_graph(frame_data, *, device: torch.device | None = None) -> dict[str, Any
 class Sampler:
     def __init__(
         self,
-        *,
-        rollout: list[dict[str, Any]],
         batch_size: int,
+        length: int,
+        **kwargs,
     ) -> None:
-        self._data = rollout
+        self.__dict__.update(kwargs)
+        self._keys = list(kwargs.keys())
+        self._keys.remove("graphs")
+        self._length = length
         self._batch_size = batch_size
 
-    def random_sample(self) -> list[dict[str, Any]]:
-        return copy.deepcopy(random.sample(self._data, self._batch_size))
+    def random_sample(self):
+        indices = random.sample(range(self._length), self._batch_size)
+        graphs = [self.graphs[i] for i in indices]  # type: ignore  # noqa: PGH003
+        frame_indices = None
+        sampled_graphs = []
+        for graph in graphs:
+            if frame_indices is None:
+                frame_indices = torch.zeros(graph.num_graphs)
+            else:
+                frame_indices = torch.cat(
+                    [
+                        frame_indices,
+                        torch.ones(graph.num_graphs) * (frame_indices.max() + 1),
+                    ]
+                )
+            for i in range(graph.num_graphs):
+                sampled_graphs.append(graph[i])
+        sampled_graphs = DataLoader(
+            sampled_graphs,
+            batch_size=len(sampled_graphs),
+        )
+        sampled_graphs = next(iter(sampled_graphs))
+
+        return copy.deepcopy(
+            {
+                **{key: self.__dict__[key][indices] for key in self._keys},
+                "graphs": sampled_graphs,
+                "frame_indices": frame_indices,
+            }
+        )
 
     # def __iter__(self):
     #     return self
