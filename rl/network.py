@@ -68,7 +68,11 @@ class GINPolicyNetwork(torch.nn.Module):
         self.lin2 = Linear(dim_h * 3, 1)  # Output 1 value for regression
 
     def forward(self, x, edge_index, batch):
+        # x:nodes of all targets:[n_agents*n_targets,n_node_features ]
+        # edge_index: [2, 2 * n_targets(n_subgraphs)*n_agents(n_nodes_in_subgraph)]
+        # batch: [n_subgraphs]
         # GIN layers
+
         h1 = self.conv1(x, edge_index).relu()
 
         h2 = self.conv2(h1, edge_index).relu()
@@ -76,6 +80,7 @@ class GINPolicyNetwork(torch.nn.Module):
         h3 = self.conv3(h2, edge_index).relu()
 
         h = torch.cat([global_add_pool(h, batch) for h in [h1, h2, h3]], dim=1)
+
         # Transformer layer
         h_transformed = self.transformer_encoder(h.unsqueeze(1)).squeeze(
             1
@@ -86,22 +91,42 @@ class GINPolicyNetwork(torch.nn.Module):
         h = F.dropout(h, p=0.5, training=self.training)
 
         return self.lin2(h)
+
+
 class GINValueNetwork(torch.nn.Module):
-    def __init__(self, dim_h):
+    def __init__(self, dim_h, num_transformer_layers=1, transformer_heads=8):
         super().__init__()
-        nn1 = Sequential(Linear(5, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU())
+        nn1 = Sequential(
+            Linear(5, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU()
+        )
         self.conv1 = GINConv(nn1)
-        nn2 = Sequential(Linear(dim_h, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU())
+        nn2 = Sequential(
+            Linear(dim_h, dim_h),
+            BatchNorm1d(dim_h),
+            ReLU(),
+            Linear(dim_h, dim_h),
+            ReLU(),
+        )
         self.conv2 = GINConv(nn2)
         self.conv3 = GINConv(nn2)
-        self.lin1 = Linear(dim_h*3, dim_h*3)
-        self.lin2 = Linear(dim_h*3, 1)  # Output 1 value for regression
+        transformer_layer = TransformerEncoderLayer(
+            d_model=dim_h * 3, nhead=transformer_heads
+        )
+        self.transformer_encoder = TransformerEncoder(
+            transformer_layer, num_layers=num_transformer_layers
+        )
+        self.lin1 = Linear(dim_h * 3, dim_h)
+        self.lin2 = Linear(dim_h, 1)  # Output 1 value for regression
 
     def forward(self, x, edge_index, batch):
         h1 = self.conv1(x, edge_index).relu()
         h2 = self.conv2(h1, edge_index).relu()
         h3 = self.conv3(h2, edge_index).relu()
         h = torch.cat([global_add_pool(h, batch) for h in [h1, h2, h3]], dim=1)
-        h = self.lin1(h).relu()
-        h = F.dropout(h, p=0.5, training=self.training)  # Added dropout before final layer
+        # Transformer layer
+        h_transformed = self.transformer_encoder(h.unsqueeze(1)).squeeze(1)
+        h_transformed = h_transformed[-1, ...]
+        # Linear layers
+        h = self.lin1(h_transformed).relu()
+        h = F.dropout(h, p=0.5, training=self.training)
         return self.lin2(h)

@@ -36,8 +36,8 @@ class Actor(nn.Module):
         )
         probabilities = F.softmax(pred, dim=0)
         if probabilities.numel() == 1:
-            action_index = torch.tensor([0])
-            log_prob = torch.tensor([0.0])
+            action_index = torch.tensor([0], device=pred.device)
+            log_prob = torch.tensor([0.0], device=pred.device).unsqueeze(0)
         else:
             action_index = torch.multinomial(probabilities.squeeze(), 1)
             log_prob = torch.log(probabilities[action_index])
@@ -123,10 +123,6 @@ class ActorCritic(nn.Module):
     def _pre_forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
         if self._forward_preprocess is not None:
             frame_data = self._forward_preprocess(frame_data)
-        if self.actor._forward_preprocess is not None:
-            frame_data = self.actor._forward_preprocess(frame_data)
-        if self.critic._forward_preprocess is not None:
-            frame_data = self.critic._forward_preprocess(frame_data)
         return frame_data
 
     __call__ = forward
@@ -139,15 +135,16 @@ class GAE:
         self._lambda = lmbda
 
     def forward(self, rollout: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        gae = 0
+        advantage = 0
         for i in reversed(range(len(rollout))):
             reward = rollout[i]["next"]["reward"]["total_reward"]
             value = rollout[i]["value"]
             next_value = rollout[i]["next"]["value"]
             next_done = rollout[i]["next"]["done"]
             delta = reward + self._gamma * next_value * (1.0 - next_done) - value
-            gae = delta + self._gamma * self._lambda * (1.0 - next_done) * gae
-            rollout[i]["advantage"] = gae
+            advantage = delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
+            rollout[i]["advantage"] = advantage
+            rollout[i]["return"] = advantage + value
         return rollout
 
     __call__ = forward

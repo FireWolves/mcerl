@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import random
 from typing import Any
 
 import torch
@@ -22,7 +24,7 @@ def build_graphs(trajectory: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return trajectory
 
 
-def to_graph(frame_data):
+def to_graph(frame_data, *, device: torch.device | None = None) -> dict[str, Any]:
     """
     Converts frame data into a graph representation.
     Args:
@@ -56,5 +58,32 @@ def to_graph(frame_data):
     )
     # torch_geometric only supports creating batched data from a DataLoader, maybe there is a better way to do this but I couldn't find it
     batch_data = next(iter(data))
+    batch_data.x = batch_data.x.to(device)
+    batch_data.edge_index = batch_data.edge_index.to(device)
+    batch_data.batch = batch_data.batch.to(device)
+    batch_data = batch_data.to(device)
     frame_data["observation"]["graph"] = batch_data
     return frame_data
+
+
+class Sampler:
+    def __init__(
+        self,
+        *,
+        rollout: list[dict[str, Any]],
+        batch_size: int,
+    ) -> None:
+        self._data = rollout
+        self._batch_size = batch_size
+
+    def random_sample(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(random.sample(self._data, self._batch_size))
+
+    # def __iter__(self):
+    #     return self
+
+    # def __next__(self) -> list[dict[str, Any]]:
+    #     if self._epochs > 0:
+    #         self._epochs -= 1
+    #         return self.random_sample()
+    #     raise StopIteration

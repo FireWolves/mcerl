@@ -236,10 +236,14 @@ def delta_time_reward_standardize(
     min_value = min(
         [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
     )
+    total_value = sum(
+        [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
+    )
     for i in range(len(trajectory)):
         trajectory[i]["next"]["reward"]["time_step_reward"] = -(
             trajectory[i]["next"]["reward"]["time_step_reward"] - min_value
         ) / (max_value - min_value)
+        trajectory[i]["info"].update({"total_time_step": total_value})
     return trajectory
 
 
@@ -263,3 +267,6 @@ def reward_sum(
         )
         trajectory[i].update({"reward_to_go": reward_to_go})
     return trajectory
+
+
+
