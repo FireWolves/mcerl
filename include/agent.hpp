@@ -17,11 +17,9 @@
 #include <spdlog/spdlog.h>
 namespace Env
 {
-/**
- * @brief NONE value
- *
- */
+
 constexpr int NONE = -1;
+constexpr int INVALID_AGENT_ID = -1;
 constexpr int MAX_FAILED_ATTEMPTS = 5;
 /**
  * @brief base class for state

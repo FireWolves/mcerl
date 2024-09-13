@@ -19,12 +19,13 @@ class Environment
 {
 
 public:
-  Environment(int num_agents, int max_steps, int max_steps_per_agent, int velocity, int sensor_range, int num_rays,
-              int min_frontier_pixel, int max_frontier_pixel,float exploration_threshold);
+  Environment();
 
   FrameData step(int agent_id, Action target_index);
 
-  FrameData reset(GridMap env_map, std::vector<Coord> poses);
+  FrameData reset(GridMap env_map, std::vector<Coord> poses, int num_agents, int max_steps, int max_steps_per_agent,
+                  int velocity, int sensor_range, int num_rays, int min_frontier_pixel, int max_frontier_pixel,
+                  float exploration_threshold);
 
   Done done() { return is_done_; };
 
@@ -50,6 +51,9 @@ public:
     auto mat = cv::Mat(map.rows(), map.cols(), CV_8UC1, map.data());
     return mat.at<uint8_t>(coord);
   }
+  void init(GridMap env_map, std::vector<Coord> poses, int num_agents, int max_steps, int max_steps_per_agent,
+            int velocity, int sensor_range, int num_rays, int min_frontier_pixel, int max_frontier_pixel,
+            float exploration_threshold);
 
 private:
   std::vector<Agent> agents_;
@@ -69,7 +73,6 @@ private:
   bool is_done_;
   int tick_;
 
-  void init(GridMap env_map, std::vector<Coord> poses);
   void set_action(int agent_id, Action target_idx);
   FrameData get_frame_data(int agent_id);
   int get_next_act_agent();

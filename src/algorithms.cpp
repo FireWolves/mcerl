@@ -24,17 +24,13 @@ struct Node
   bool operator==(const Node &rhs) const { return pos == rhs.pos; }
   bool operator<(const Node &rhs) const { return f < rhs.f; }
 };
-inline int sgn(const int &x)
-{
-  if (x > 0)
-    return 1;
-  if (x < 0)
-    return -1;
-  return 0;
-};
+
+inline int sgn(const int &x) { return (x > 0) - (x < 0); };
+inline cv::Point sgn(const cv::Point &p) { return std::move(cv::Point{sgn(p.x), sgn(p.y)}); };
+
 cv::Point expand_point(cv::Point point, int rows, int cols, cv::Point origin, int expand_pixel)
 {
-  auto res = point + cv::Point{sgn((point.x - origin.x)), sgn((point.y - origin.y))} * expand_pixel;
+  auto res = point + sgn(point - origin) * expand_pixel;
   res.x = std::clamp(res.x, 0, cols - 1);
   res.y = std::clamp(res.y, 0, rows - 1);
   return res;
@@ -44,17 +40,12 @@ int calculate_surrounding_unexplored_pixels(Env::GridMap *exploration_map, Coord
   int rows = exploration_map->rows(), cols = exploration_map->cols();
   auto &&grid_mat = cv::Mat(rows, cols, CV_8UC1, exploration_map->data());
 
-  int unexplored_pixels = 0;
-  for (int col = pos.x - range; col <= pos.x + range; col++)
-  {
-    for (int row = pos.y - range; row <= pos.y + range; row++)
-    {
-      if (col < 0 || col >= cols || row < 0 || row >= rows)
-        continue;
-      if (grid_mat.at<uint8_t>(row, col) > 50 && grid_mat.at<uint8_t>(row, col) < 150)
-        unexplored_pixels++;
-    }
-  }
+  cv::Rect roi{pos.x - range, pos.y - range, 2 * range + 1, 2 * range + 1};
+  roi &= cv::Rect{0, 0, cols, rows};
+
+  auto &&sub_mat = grid_mat(roi);
+  auto unexplored_pixels = cv::countNonZero((sub_mat < 150) & (sub_mat > 50));
+
   return unexplored_pixels;
 }
 void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coord pos, int sensor_range, int num_rays,
@@ -66,8 +57,9 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
   std::default_random_engine random_engine;
   std::uniform_real_distribution<float> random_offset;
 
-  auto &&mat = cv::Mat(env_map->rows(), env_map->cols(), CV_8UC1, env_map->data());
-  auto &&mat_update = cv::Mat(exploration_map->rows(), exploration_map->cols(), CV_8UC1, exploration_map->data());
+  auto &&static_mat = cv::Mat(env_map->rows(), env_map->cols(), CV_8UC1, env_map->data());
+
+  auto &&map_to_update = cv::Mat(exploration_map->rows(), exploration_map->cols(), CV_8UC1, exploration_map->data());
 
   /*** 计算需要进行光追的像素点 ***/
   std::vector<cv::Point> circle_end_points;
@@ -87,11 +79,11 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
   std::vector<cv::Point> polygon(circle_end_points);
   for (int i = 0; i < circle_end_points.size(); i++)
   {
-    cv::LineIterator it(mat, pos, circle_end_points[i], 8);
+    cv::LineIterator it(static_mat, pos, circle_end_points[i], 8);
     for (int j = 0; j < it.count; j++, ++it)
     {
-      auto &&current_point = mat.at<uint8_t>(it.pos());
-      polygon[i] = expand_point(it.pos(), mat.rows, mat.cols, pos, expand_pixels);
+      auto &&current_point = static_mat.at<uint8_t>(it.pos());
+      polygon[i] = expand_point(it.pos(), static_mat.rows, static_mat.cols, pos, expand_pixels);
       if (current_point == OCCUPIED)
       {
         break;
@@ -100,14 +92,19 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
   }
   /*** 计算多边形的最小外接矩形 ***/
   auto polygon_bbx = cv::boundingRect(polygon);
+
   /*** 计算多边形在最小外接矩形中的位置 ***/
+
   std::vector<cv::Point> polygon_in_roi(polygon.size());
   for (size_t i = 0; i < polygon.size(); ++i)
     polygon_in_roi[i] = polygon.at(i) - polygon_bbx.tl();
+
   /*** 计算多边形的ROI和需要填充的部分 ***/
   cv::Mat roi_mask(polygon_bbx.size(), CV_8UC1, cv::Scalar(0));
+
   cv::fillPoly(roi_mask, std::vector<std::vector<cv::Point>>{polygon_in_roi}, 255);
-  cv::copyTo(mat(polygon_bbx), mat_update(polygon_bbx), roi_mask);
+
+  cv::copyTo(static_mat(polygon_bbx), map_to_update(polygon_bbx), roi_mask);
 }
 
 std::vector<FrontierPoint> frontier_detection(Env::GridMap *exploration_map, int min_pixels, int max_pixels,
@@ -292,30 +289,13 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
       spdlog::trace("reversing path");
 
       std::reverse(path.begin(), path.end());
-      std::stringstream ss;
-      for (auto &&p : path)
-      {
-        ss << "(" << p.x << "," << p.y << ") ";
-      }
-      spdlog::trace("path: {}", ss.str());
+
       if (path.back() != end)
       {
         spdlog::trace("adding end direct path");
         auto direct = direct_path(current_node_ptr->pos, end);
-        std::stringstream s;
-        for (auto &&p : direct)
-        {
-          s << "(" << p.x << "," << p.y << ") ";
-        }
-        spdlog::trace("direct path: {}", s.str());
         path.insert(path.end(), direct.begin() + 1, direct.end());
       }
-      std::stringstream s;
-      for (auto &&p : path)
-      {
-        s << "(" << p.x << "," << p.y << ") ";
-      }
-      spdlog::trace("Path reconstructed. final path: {}", s.str());
       return path;
     }
     // 获取当前节点的子节点
@@ -325,9 +305,7 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
       auto &&next_pos = current_node_ptr->pos + DIRECTIONS[i];
       // 如果子节点越界或者是障碍物, 则跳过
       if (next_pos.x < 0 || next_pos.x >= exploration_map->cols() || next_pos.y < 0 ||
-          next_pos.y >= exploration_map->rows())
-        continue;
-      if ((*exploration_map)(next_pos.x, next_pos.y) != FREE)
+          next_pos.y >= exploration_map->rows() || (*exploration_map)(next_pos.x, next_pos.y) != FREE)
         continue;
       Node child = {next_pos, current_node_ptr};
       // 如果子节点已经访问过, 则跳过
@@ -336,7 +314,7 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
         continue;
       }
       child.g = current_node_ptr->g + ((i < 4) ? 10 : 14);
-      child.h = std::sqrt((std::pow(child.pos.x - end.x, 2) + std::pow(child.pos.y - end.y, 2))) * 10;
+      child.h = cv::norm(child.pos - end) * 10;
       child.f = child.g + child.h;
       // 如果子节点已经在open_set中, 则更新cost 和 parent
       auto node_in_open_set_itr = std::find(open_set.begin(), open_set.end(), child);
@@ -364,21 +342,10 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
   //                    0   |  0  | <0> | <0>
   //                    127 |  0  | 127 | 255
   //                    255 |  0  |<255>| 255
-  // if (!global_map)
-  // {
-  //   throw std::invalid_argument("Null pointer passed to map_merge: global_map");
-  // }
-  // if (!agent_map)
-  // {
-  //   throw std::invalid_argument("Null pointer passed to map_merge: agent_map");
-  // }
+
   auto &&mat_global = cv::Mat(global_map->rows(), global_map->cols(), CV_8UC1, global_map->data());
   auto &&mat_update = cv::Mat(agent_map->rows(), agent_map->cols(), CV_8UC1, agent_map->data());
-  // 检查矩阵尺寸是否匹配
-  // if (mat_global.size() != mat_update.size())
-  // {
-  //   throw std::invalid_argument("Mismatched map sizes in map_merge");
-  // }
+
   mat_global.setTo(OCCUPIED, mat_update == OCCUPIED);
   mat_global.setTo(FREE, (mat_update == FREE) & (mat_global != OCCUPIED));
 }
@@ -408,22 +375,11 @@ float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *expl
 }
 
 bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int radius,
-                       int threshold, bool check_reachability, Env::GridMap *exploration_map, Coord agent_pos)
+                       int threshold)
 {
   auto unexplored_pixels = calculate_surrounding_unexplored_pixels(global_map.get(), frontier_point.pos, radius);
   if (unexplored_pixels < threshold)
     return false;
-  if (check_reachability)
-  {
-    if (!exploration_map)
-    {
-      return false;
-    }
-    if (a_star(exploration_map, agent_pos, frontier_point.pos).empty())
-    {
-      return false;
-    }
-  }
   return true;
 }
 

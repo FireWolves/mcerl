@@ -82,7 +82,7 @@ using Done = bool;
  */
 using Action = int;
 using FrameData = std::tuple<Observation, Reward, Done, Info>;
-
+constexpr int INVALID_TARGET = -1;
 } // namespace Env
 
 /**

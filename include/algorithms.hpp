@@ -16,7 +16,6 @@ void map_merge(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map
 int calculate_valid_explored_pixels(std::shared_ptr<Env::GridMap> global_map, Env::GridMap *agent_map);
 float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *exploration_map);
 bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int radius,
-                       int threshold, bool check_reachability = false, Env::GridMap *exploration_map = nullptr,
-                       Env::Coord agent_pos = {0, 0});
+                       int threshold);
 int count_pixels(Env::GridMap *map, uint8_t value, bool exclude_value);
 } // namespace Alg
