@@ -55,14 +55,17 @@ class Actor(nn.Module):
             else:
                 action_index = torch.multinomial(probabilities.squeeze(), 1)
             log_prob = torch.log(probabilities[action_index])
+            entropy = torch.mean(probabilities * torch.log(probabilities + 1e-10))
             if index == 0:
                 actions = action_index
                 log_probs = log_prob
+                entropies = entropy
             else:
                 actions = torch.cat((actions, action_index))
                 log_probs = torch.cat((log_probs, log_prob))
+                entropies = torch.cat((entropies, entropy))
 
-        return actions, log_probs
+        return actions, log_probs, entropies
 
     __call__ = forward
 
@@ -154,9 +157,9 @@ class ActorCritic(nn.Module):
         return frame_data
 
     def forward_parallel(self, graph, batch):
-        action_index, log_prob = self.actor.forward_parallel(graph, batch)
+        action_index, log_prob, entropy = self.actor.forward_parallel(graph, batch)
         value = self.critic.forward_parallel(graph, batch)
-        return action_index, log_prob, value
+        return action_index, log_prob, value, entropy
 
     __call__ = forward
 
