@@ -35,6 +35,7 @@ class GINPolicyNetwork(torch.nn.Module):
     def __init__(
         self,
         *,
+        dim_feature: int,
         dim_h,
         num_transformer_layers=1,
         transformer_heads=8,
@@ -42,7 +43,11 @@ class GINPolicyNetwork(torch.nn.Module):
         super().__init__()
         # Existing GIN layers
         nn1 = Sequential(
-            Linear(5, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU()
+            Linear(dim_feature, dim_h),
+            BatchNorm1d(dim_h),
+            ReLU(),
+            Linear(dim_h, dim_h),
+            ReLU(),
         )
         self.conv1 = GINConv(nn1)
         nn2 = Sequential(
@@ -91,10 +96,16 @@ class GINPolicyNetwork(torch.nn.Module):
 
 
 class GINValueNetwork(torch.nn.Module):
-    def __init__(self, dim_h, num_transformer_layers=1, transformer_heads=8):
+    def __init__(
+        self, dim_feature, dim_h, num_transformer_layers=1, transformer_heads=8
+    ):
         super().__init__()
         nn1 = Sequential(
-            Linear(5, dim_h), BatchNorm1d(dim_h), ReLU(), Linear(dim_h, dim_h), ReLU()
+            Linear(dim_feature, dim_h),
+            BatchNorm1d(dim_h),
+            ReLU(),
+            Linear(dim_h, dim_h),
+            ReLU(),
         )
         self.conv1 = GINConv(nn1)
         nn2 = Sequential(
@@ -128,7 +139,7 @@ class GINValueNetwork(torch.nn.Module):
             if self.training:
                 h = torch.nested.to_padded_tensor(h, padding=0.0)
 
-        if len(h.shape)<3:
+        if len(h.shape) < 3:
             h = h.unsqueeze(0)
         h_transformed = self.transformer_encoder(h)  # cross-attention
         h_transformed = torch.mean(h_transformed, dim=1)

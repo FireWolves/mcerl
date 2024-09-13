@@ -101,7 +101,8 @@ PYBIND11_MODULE(_core, env)
   py::class_<Env::FrontierPoint>(env, "FrontierPoint")
       .def(py::init<>())
       .def_readonly("pos", &Env::FrontierPoint::pos)
-      .def_readonly("unexplored_pixels", &Env::FrontierPoint::unexplored_pixels);
+      .def_readonly("unexplored_pixels", &Env::FrontierPoint::unexplored_pixels)
+      .def_readonly("distance", &Env::FrontierPoint::distance);
 
   py::class_<Env::Info>(env, "info")
       .def(py::init<>())

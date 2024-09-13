@@ -36,6 +36,7 @@ struct FrontierPoint
 {
   Coord pos;             /**< The position of the frontier point. */
   int unexplored_pixels; /**< The number of unexplored pixels around the frontier point. */
+  int distance;          /**< The distance to the agent. */
 };
 
 /**

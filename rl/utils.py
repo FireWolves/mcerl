@@ -41,6 +41,7 @@ def to_graph(frame_data, *, device: torch.device | None = None) -> dict[str, Any
     for frontier_point in frame_frontier_points:
         x = torch.cat(
             [
+                torch.ones(frame_agent_poses.shape[0], 1) * frontier_point[-2],
                 torch.ones(frame_agent_poses.shape[0], 1) * frontier_point[-1],
                 frame_agent_poses,
                 frame_target_poses,

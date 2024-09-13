@@ -207,7 +207,7 @@ class Env:
         unwrapped_data["done"] = done
         unwrapped_data["observation"] = {
             "frontier_points": [
-                (*frontier_point.pos, frontier_point.unexplored_pixels)
+                (*frontier_point.pos, frontier_point.unexplored_pixels,frontier_point.distance)
                 for frontier_point in obs.frontier_points
             ],
             "pos": obs.agent_poses,
