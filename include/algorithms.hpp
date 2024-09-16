@@ -18,4 +18,5 @@ float exploration_rate(std::shared_ptr<Env::GridMap> env_map, Env::GridMap *expl
 bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPoint &frontier_point, int radius,
                        int threshold);
 int count_pixels(Env::GridMap *map, uint8_t value, bool exclude_value);
+int calculate_path_distance(const Env::Path &path);
 } // namespace Alg

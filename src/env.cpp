@@ -266,8 +266,8 @@ FrameData Environment::get_frame_data(int agent_id)
   {
     if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4))
     {
-      auto path = Alg::a_star(agent.state.map.get(), agent.state.pos, frontier.pos);
-      frontier.distance = path.size();
+      frontier.path = Alg::a_star(agent.state.map.get(), agent.state.pos, frontier.pos);
+      frontier.distance = Alg::calculate_path_distance(frontier.path);
       valid_frontiers.push_back(frontier);
     }
   }
@@ -370,7 +370,7 @@ int Environment::step_once()
 
       spdlog::trace("Moving agent");
       auto next_pos = agent.state.executing_path->front();
-      agent.state.executing_path->erase(agent.state.executing_path->begin());
+      agent.state.executing_path->pop_front();
       agent.state.pos = next_pos;
 
       spdlog::trace("Updating map");

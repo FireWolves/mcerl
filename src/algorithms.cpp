@@ -251,7 +251,7 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
   {
     spdlog::debug("direct path. ");
     auto path = direct_path(start, end);
-    path.insert(path.begin(), start);
+    path.push_front(start);
     path.push_back(end);
     return path;
   }
@@ -381,6 +381,29 @@ bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPo
   if (unexplored_pixels < threshold)
     return false;
   return true;
+}
+
+inline double dis(const cv::Point &a, const cv::Point &b)
+{
+  if (abs((a - b).x) == 1 && abs((a - b).y) == 1)
+  {
+    return 1.414;
+  }
+  return 1;
+}
+
+int calculate_path_distance(const Path &path)
+{
+  if (path.empty())
+  {
+    return INT_MAX;
+  }
+  float distance = 0;
+  for (int i = 0; i < path.size() - 1; i++)
+  {
+    distance += dis(path[i], path[i + 1]);
+  }
+  return static_cast<int>(distance);
 }
 
 } // namespace Alg

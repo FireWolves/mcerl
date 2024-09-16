@@ -9,6 +9,7 @@
  *
  */
 #pragma once
+#include <deque>
 #include <fmt/core.h>
 #include <opencv2/core.hpp>
 #include <vector>
@@ -27,7 +28,7 @@ using Coord = cv::Point;
 /**
  * @brief Alias for a path in the environment.
  */
-using Path = std::vector<Coord>;
+using Path = std::deque<Coord>;
 
 /**
  * @brief Represents a frontier point in the environment.
@@ -37,6 +38,7 @@ struct FrontierPoint
   Coord pos;             /**< The position of the frontier point. */
   int unexplored_pixels; /**< The number of unexplored pixels around the frontier point. */
   int distance;          /**< The distance to the agent. */
+  Path path;             /**< The path to the frontier point. */
 };
 
 /**
