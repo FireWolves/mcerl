@@ -1,8 +1,9 @@
 #include "env.hpp"
 #include "algorithms.hpp"
 #include "spdlog/cfg/env.h"
+#include <execution>
+#include <iostream>
 #include <spdlog/sinks/basic_file_sink.h>
-
 #include <spdlog/spdlog.h>
 namespace Env
 
@@ -25,20 +26,27 @@ namespace Env
  * - get_next_act_agent(): Returns the ID of the next agent that requires a new target.
  * - step_once(): Performs a single step for all agents in the environment.
  */
-Environment::Environment()
+Environment::Environment(const std::string log_level)
 {
-  // 创建一个文件日志接收器
-  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_st>("logs/debug.txt", true);
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("logs/debug.txt", true);
 
-  // 创建一个复合日志器，将日志同时输出到控制台和文件
-  spdlog::logger logger("ENV", {file_sink});
+  // 创建一个日志器，将日志输出到文件
+  auto logger = std::make_shared<spdlog::logger>("ENV", file_sink);
+
+  // 设置日志器的日志级别
+  spdlog::level::level_enum level = spdlog::level::from_str(log_level);
+  std::cout << "log_level: " << spdlog::level::to_string_view(level).data() << std::endl;
+  logger->set_level(level);
+  logger->flush_on(level);
 
   // 替换默认日志器
-  spdlog::set_default_logger(std::make_shared<spdlog::logger>(logger));
-  spdlog::cfg::load_env_levels();
-  spdlog::flush_on(spdlog::level::trace);
-  spdlog::trace("Logger initialized");
+  spdlog::set_default_logger(logger);
 
+  // 设置日志刷新级别
+  spdlog::flush_on(level);
+
+  // 记录初始化日志
+  spdlog::trace("Logger initialized");
   spdlog::debug("Environment instanced");
 }
 
@@ -59,6 +67,24 @@ void Environment::init(GridMap env_map, std::vector<Coord> poses, int num_agents
   this->min_frontier_pixel_ = min_frontier_pixel;
   this->max_frontier_pixel_ = max_frontier_pixel;
   this->exploration_threshold_ = exploration_threshold;
+  this->unit_circle_end_points_ = Alg::calculate_unit_circled_points(num_rays_);
+  this->ray_cast_random_offs_min_ = 0;
+  this->ray_cast_random_offs_max_ = std::max(this->ray_cast_random_offs_min_, this->sensor_range_ / 10);
+  this->ray_cast_expand_pixels_ = this->sensor_range_ / 10;
+  spdlog::debug("=====Environment parameters:=====");
+  spdlog::debug("num_agents: {}", num_agents_);
+  spdlog::debug("max_steps: {}", max_steps_);
+  spdlog::debug("max_steps_per_agent: {}", max_steps_per_agent_);
+  spdlog::debug("velocity: {}", velocity_);
+  spdlog::debug("sensor_range: {}", sensor_range_);
+  spdlog::debug("num_rays: {}", num_rays_);
+  spdlog::debug("min_frontier_pixel: {}", min_frontier_pixel_);
+  spdlog::debug("max_frontier_pixel: {}", max_frontier_pixel_);
+  spdlog::debug("exploration_threshold: {}", exploration_threshold_);
+  spdlog::debug("ray_cast_random_offs_min: {}", ray_cast_random_offs_min_);
+  spdlog::debug("ray_cast_random_offs_max: {}", ray_cast_random_offs_max_);
+  spdlog::debug("ray_cast_expand_pixels: {}", ray_cast_expand_pixels_);
+  spdlog::debug("==================================");
   spdlog::trace("Environment parameters set");
 
   spdlog::trace("Creating env map and global map: {}x{}", env_map.width(), env_map.height());
@@ -168,7 +194,19 @@ void Environment::set_action(int agent_id, Action target_idx)
   }
 
   spdlog::trace("Getting target frontier point");
-  FrontierPoint target_frontier = agent.state.frontier_points[target_idx];
+  spdlog::trace("PATH CHECK:");
+  for (auto &frontier : agent.state.frontier_points)
+  {
+    std::stringstream ss;
+    for (auto &&point : frontier.path)
+    {
+      ss << "(" << point.x << ", " << point.y << "), ";
+    }
+    spdlog::trace("Frontier: pos: ({}, {}), distance: {},path: {}", frontier.pos.x, frontier.pos.y, frontier.distance,
+                  ss.str());
+  }
+
+  auto target_frontier = agent.state.frontier_points[target_idx];
   spdlog::trace("Target frontier point retrieved, pos: {}, unexplored pixels: {}", target_frontier.pos,
                 target_frontier.unexplored_pixels);
 
@@ -181,10 +219,18 @@ void Environment::set_action(int agent_id, Action target_idx)
 
   spdlog::trace("Set new action and computing path for {} action index: {} target pos: {}", agent_id, target_idx,
                 target_frontier.pos);
+
   agent.action = {target_idx, target_frontier.pos};
-  agent.state.executing_path =
-      std::make_unique<Path>(Alg::a_star(agent.state.map.get(), agent.state.pos, target_frontier.pos));
+  agent.state.executing_path = std::make_unique<Path>(target_frontier.path);
   spdlog::trace("Action and path set, path size: {}", agent.state.executing_path->size());
+
+  spdlog::trace("PATH CHECK:");
+  std::stringstream ss;
+  for (auto &&point : *agent.state.executing_path)
+  {
+    ss << "(" << point.x << ", " << point.y << "), ";
+  }
+  spdlog::trace(ss.str());
 
   spdlog::trace("Checking if path is empty");
   if (agent.state.executing_path->empty())
@@ -281,6 +327,17 @@ FrameData Environment::get_frame_data(int agent_id)
     spdlog::trace("Done flag set");
   }
   spdlog::trace("Frontier checked");
+  spdlog::trace("Valid frontiers: ");
+  for (auto &&frontier : valid_frontiers)
+  {
+    spdlog::trace("Frontier: pos: ({}, {}), distance: {},path:", frontier.pos.x, frontier.pos.y, frontier.distance);
+    std::stringstream ss;
+    for (auto &&point : frontier.path)
+    {
+      ss << "(" << point.x << ", " << point.y << "), ";
+    }
+    spdlog::trace(ss.str());
+  }
 
   spdlog::trace("Getting agent poses and agents' targets' poses");
   for (auto &agent : agents_)
@@ -344,49 +401,137 @@ int Environment::step_once()
 {
   spdlog::debug("Step env once");
 
-  spdlog::trace("Ticking env");
-  while (++tick_ < max_steps_)
+  auto &&env_mat = cv::Mat(env_map_->rows(), env_map_->cols(), CV_8UC1, env_map_->data());
+
+  spdlog::trace("Getting valid agents");
+  std::vector<Agent *> valid_agent_ptrs;
+  for (size_t i = 0; i < agents_.size(); i++)
   {
-    spdlog::trace("Checking if all agents are done");
-    if (this->is_done_ || std::find_if(agents_.begin(), agents_.end(),
-                                       [](const Agent &agent) { return agent.done.done != true; }) == agents_.end())
+    if (agents_[i].done.done != true)
     {
-      spdlog::debug("All agents done or environment done, setting done flag for environment and exit step once");
-      this->is_done_ = true;
-      return INVALID_AGENT_ID;
+      valid_agent_ptrs.push_back(&agents_[i]);
     }
-    spdlog::trace("Agents done checked. Looping agents at tick: {}", tick_);
+  }
+  if (valid_agent_ptrs.empty() || this->is_done_)
+  {
+    spdlog::debug("All agents done or env is done. Exit step once");
+    return INVALID_AGENT_ID;
+  }
+  spdlog::trace("Valid agents checked. Looping agents at tick: {}", tick_);
+  while (tick_ < max_steps_)
+  {
 
-    for (auto &agent : agents_)
+    spdlog::trace("Getting max common path size");
+    size_t max_common_path_size = INT_MAX;
+    for (auto agent_ptr : valid_agent_ptrs)
     {
-      spdlog::trace("Agent: {}", agent.info.id);
-
-      spdlog::trace("Checking if agent reached target");
-      if (agent.state.executing_path == nullptr || agent.state.executing_path->empty())
+      if (agent_ptr->state.executing_path == nullptr)
       {
-        spdlog::debug("Agent {} reached target. Exit step once", agent.info.id);
-        return agent.info.id;
+        max_common_path_size = 0;
+        break;
       }
-
-      spdlog::trace("Moving agent");
-      auto next_pos = agent.state.executing_path->front();
-      agent.state.executing_path->pop_front();
-      agent.state.pos = next_pos;
-
-      spdlog::trace("Updating map");
-      Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
-
-      spdlog::trace("Calculating valid explored pixels and recording delta time");
-      auto valid_explored_pixels = Alg::calculate_valid_explored_pixels(global_map_, agent.state.map.get());
-      agent.reward.new_explored_pixels += valid_explored_pixels;
-      agent.info.delta_time++;
-      spdlog::info("Valid explored pixels: {}, all new explored pixels: {}", valid_explored_pixels,
-                   agent.reward.new_explored_pixels);
-
-      spdlog::trace("Merging map to global map");
-      Alg::map_merge(global_map_, agent.state.map.get());
-      spdlog::trace("Map merged");
+      max_common_path_size = std::min(max_common_path_size, agent_ptr->state.executing_path->size());
     }
+    if (max_common_path_size == 0)
+    {
+      spdlog::trace("Max common path size is 0, triggering next act agent");
+      auto next_act_agent_ptr =
+          *std::find_if(valid_agent_ptrs.begin(), valid_agent_ptrs.end(), [](const Agent *agent_ptr) {
+            return agent_ptr->state.executing_path == nullptr || agent_ptr->state.executing_path->empty();
+          });
+      spdlog::debug("Next act agent found: {}. Exit step once", next_act_agent_ptr->info.id);
+      return next_act_agent_ptr->info.id;
+    }
+    spdlog::trace("Max common path size: {}", max_common_path_size);
+
+    spdlog::trace("Calculating ray traces for all agents on common path");
+
+    spdlog::trace("Collecting common path for agents and circle end points");
+    std::vector<std::vector<std::pair<Coord, std::vector<Coord>>>> common_paths_with_polygon;
+    for (auto agent_ptr : valid_agent_ptrs)
+    {
+      auto path = *agent_ptr->state.executing_path;
+      std::vector<std::pair<Coord, std::vector<Coord>>> common_path_with_polygon;
+      for (const auto &node : path)
+      {
+        // TODO: calculate circle end points.
+        auto &&end_points = Alg::calculate_circle_points_with_random_offset(
+            unit_circle_end_points_, node, sensor_range_, this->ray_cast_random_offs_min_,
+            this->ray_cast_random_offs_max_, agent_ptr->state.map->rows(), agent_ptr->state.map->cols());
+        common_path_with_polygon.push_back({node, end_points});
+      }
+      common_paths_with_polygon.push_back(common_path_with_polygon);
+    }
+    for (auto &&common_path : common_paths_with_polygon)
+    {
+      for (auto &&node : common_path)
+      {
+        std::stringstream ss;
+        ss << "Node: ";
+        ss << "(" << node.first.x << ", " << node.first.y << "), ";
+        ss << "Basic Circle end points: ";
+        for (auto &&point : node.second)
+        {
+          ss << "(" << point.x << ", " << point.y << "), ";
+        }
+        spdlog::trace(ss.str());
+      }
+    }
+    spdlog::trace("Common path collected, getting all ray traces");
+
+    std::for_each(std::execution::par_unseq, common_paths_with_polygon.begin(), common_paths_with_polygon.end(),
+                  [&env_mat, sensor_range = this->sensor_range_,
+                   ray_cast_expand_pixels = this->ray_cast_expand_pixels_](auto &path) {
+                    std::for_each(std::execution::par_unseq, path.begin(), path.end(),
+                                  [&env_mat, sensor_range, ray_cast_expand_pixels](auto &node_with_polygon) {
+                                    auto &&node = node_with_polygon.first;
+                                    auto &&polygon = node_with_polygon.second;
+                                    polygon = Alg::ray_trace(env_mat, node, polygon, ray_cast_expand_pixels);
+                                  });
+                  });
+    spdlog::trace("Ray traces calculated");
+
+    spdlog::trace("Updating map for all agents");
+    for (int ticks = 0; ticks < max_common_path_size; ++ticks)
+    {
+      spdlog::trace("Updating map for all agents at tick: {}", ticks);
+      for (int agent_idx = 0; agent_idx < valid_agent_ptrs.size(); ++agent_idx)
+      {
+        spdlog::trace("Updating map for agent: {}", agent_idx);
+        auto &&agent = *valid_agent_ptrs[agent_idx];
+        auto &&common_path = common_paths_with_polygon[agent_idx];
+        spdlog::trace("Agent: {}, common path size: {}", agent_idx, common_path.size());
+        for (auto &&node : common_path)
+        {
+          std::stringstream ss;
+          ss << "Node: ";
+          ss << "(" << node.first.x << ", " << node.first.y << "), ";
+          ss << "Circle end points: ";
+          for (auto &&point : node.second)
+          {
+            ss << "(" << point.x << ", " << point.y << "), ";
+          }
+          spdlog::trace(ss.str());
+        }
+        auto next_pos = agent.state.executing_path->front();
+        spdlog::trace("Next pos: ({}, {})", next_pos.x, next_pos.y);
+        agent.state.executing_path->pop_front();
+        agent.state.pos = next_pos;
+        auto &&agent_map_mat =
+            cv::Mat(agent.state.map->rows(), agent.state.map->cols(), CV_8UC1, agent.state.map.get()->data());
+        Alg::map_update_with_polygon(env_mat, agent_map_mat, agent.state.pos, common_path[ticks].second);
+
+        auto valid_explored_pixels = Alg::calculate_valid_explored_pixels(global_map_, agent.state.map.get());
+        agent.reward.new_explored_pixels += valid_explored_pixels;
+        agent.info.delta_time++;
+        spdlog::info("Valid explored pixels: {}, all new explored pixels: {}", valid_explored_pixels,
+                     agent.reward.new_explored_pixels);
+
+        Alg::map_merge(global_map_, agent.state.map.get());
+      }
+      this->tick_++;
+    }
+    spdlog::trace("Map updated");
   }
   spdlog::warn("Step limit reached, setting done flag for environment and exit step once");
   this->is_done_ = true;

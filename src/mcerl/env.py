@@ -1,11 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Collection
+from typing import Any, Callable, Collection
 
 import numpy as np
 import numpy.typing as npt
 
 import mcerl
+from mcerl.utils import (
+    pad_trajectory,
+    random_policy,
+    refine_trajectory,
+    split_trajectories,
+)
 
 FREE = 255
 OCCUPIED = 0
@@ -43,16 +49,7 @@ class Env:
 
     def __init__(
         self,
-        *,
-        num_agents: int,
-        max_steps: int,
-        max_steps_per_agent: int,
-        velocity: int,
-        sensor_range: int,
-        num_rays: int,
-        min_frontier_pixel: int,
-        max_frontier_pixel: int,
-        exploration_threshold: float = 0.95,
+        log_level: str = "INFO",
     ) -> None:
         """
         Initializes a new instance of the Env class.
@@ -70,29 +67,7 @@ class Env:
         None
 
         """
-        self.num_agents = num_agents
-        self.max_steps = max_steps
-        self.max_steps_per_agent = max_steps_per_agent
-        self.velocity = velocity
-        self.sensor_range = sensor_range
-        self.num_rays = num_rays
-        self.min_frontier_pixel = min_frontier_pixel
-        self.max_frontier_pixel = max_frontier_pixel
-        self.exploration_threshold = exploration_threshold
-
-        self._last_data: dict[str, Any] | None = None
-
-        self._env: mcerl.Environment = mcerl.Environment(
-            num_agents,
-            max_steps,
-            max_steps_per_agent,
-            velocity,
-            sensor_range,
-            num_rays,
-            min_frontier_pixel,
-            max_frontier_pixel,
-            exploration_threshold,
-        )
+        self._env: mcerl.Environment = mcerl.Environment(log_level)
 
     @property
     def last_data(self) -> dict[str, Any]:
@@ -112,12 +87,61 @@ class Env:
             raise ValueError(msg)
         return self._last_data
 
+    def rollout(
+        self,
+        policy: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        **kwargs,
+    ) -> list[list[dict[str, Any]]]:
+        if policy is None:
+            policy = random_policy
+        trajectories = []
+        frame_data = self.reset(**kwargs)
+        if self.env_transform is not None:
+            frame_data = self.env_transform(frame_data)
+        while True:
+            # if the agent is done, we set the action to 0 to wait other agent to finish
+            if (
+                frame_data["done"]
+                or len(frame_data["observation"]["frontier_points"]) == 0
+            ):
+                frame_data["action"] = 0
+            else:
+                # otherwise, we use the policy to get the action
+                frame_data = policy(frame_data)
+            # append the frame data with action to the trajectory
+            trajectories.append(frame_data)
+            # step the environment
+            frame_data = self.step(frame_data, return_maps=self.return_maps)
+            # if the environment is done, we append the last frame data and break
+            if self.done() is True:
+                trajectories.append(frame_data)
+                break
+            if (
+                self.env_transform is not None
+            ):  # transform function should consider  if environment is done,
+                frame_data = self.env_transform(frame_data)
+
+        rollouts = split_trajectories(trajectories)
+        rollouts = [pad_trajectory(rollout) for rollout in rollouts]
+        rollouts = [refine_trajectory(rollout) for rollout in rollouts]
+        return rollouts  # noqa:  RET504
+
     def reset(
         self,
         grid_map: npt.NDArray[np.uint8],
-        agent_poses: Collection[tuple[int, int]] | None = None,
         *,
+        agent_poses: Collection[tuple[int, int]] | None = None,
+        num_agents: int,
+        max_steps: int,
+        max_steps_per_agent: int,
+        velocity: int,
+        sensor_range: int,
+        num_rays: int,
+        min_frontier_pixel: int,
+        max_frontier_pixel: int,
+        exploration_threshold: float = 0.95,
         return_maps: bool = False,
+        env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """
         Resets the environment to its initial state.
@@ -134,6 +158,21 @@ class Env:
             ValueError: If the number of agent poses does not match the number of agents.
 
         """
+        self.num_agents: int = num_agents
+        self.max_steps: int = max_steps
+        self.max_steps_per_agent: int = max_steps_per_agent
+        self.velocity: int = velocity
+        self.sensor_range: int = sensor_range
+        self.num_rays: int = num_rays
+        self.min_frontier_pixel: int = min_frontier_pixel
+        self.max_frontier_pixel: int = max_frontier_pixel
+        self.exploration_threshold: float = exploration_threshold
+        self.return_maps: bool = return_maps
+        self._last_data: dict[str, Any] | None = None
+        self.env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = (
+            env_transform
+        )
+
         if grid_map.ndim != 2:
             msg = "Expected 2D grid map"
             raise ValueError(msg)
@@ -145,11 +184,23 @@ class Env:
             msg = f"Expected {self.num_agents} agent poses, got {len(agent_poses)}"
             raise ValueError(msg)
 
-        data = self._env.reset(mcerl.GridMap(grid_map), list(agent_poses))
+        data = self._env.reset(
+            mcerl.GridMap(grid_map),
+            list(agent_poses),
+            self.num_agents,
+            self.max_steps,
+            self.max_steps_per_agent,
+            self.velocity,
+            self.sensor_range,
+            self.num_rays,
+            self.min_frontier_pixel,
+            self.max_frontier_pixel,
+            self.exploration_threshold,
+        )
 
         data = self.unwrap_data(data)
         curr_agent = data["info"]["agent_id"]
-        if return_maps:
+        if self.return_maps:
             data["observation"]["global_map"] = self.global_map()
             data["observation"]["agent_map"] = self.agent_map(curr_agent)
         return data
@@ -207,7 +258,11 @@ class Env:
         unwrapped_data["done"] = done
         unwrapped_data["observation"] = {
             "frontier_points": [
-                (*frontier_point.pos, frontier_point.unexplored_pixels,frontier_point.distance)
+                (
+                    *frontier_point.pos,
+                    frontier_point.unexplored_pixels,
+                    frontier_point.distance,
+                )
                 for frontier_point in obs.frontier_points
             ],
             "pos": obs.agent_poses,

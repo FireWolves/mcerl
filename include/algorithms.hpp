@@ -19,4 +19,12 @@ bool is_frontier_valid(std::shared_ptr<Env::GridMap> global_map, Env::FrontierPo
                        int threshold);
 int count_pixels(Env::GridMap *map, uint8_t value, bool exclude_value);
 int calculate_path_distance(const Env::Path &path);
+std::vector<cv::Point> ray_trace(const cv::Mat &static_mat, Env::Coord pos,
+                                 const std::vector<Env::Coord> &circle_end_points, int expand_pixels);
+Env::GridMap map_update_with_polygon(const cv::Mat &static_mat, cv::Mat &mat_to_update, Env::Coord pos,
+                             std::vector<cv::Point> polygon);
+std::vector<cv::Point> calculate_circle_points_with_random_offset(const std::vector<cv::Point2d> &unit_circles,
+                                                                  Env::Coord pos, int radius, double random_offset_min,
+                                                                  double random_offset_max,int rows, int cols);
+std::vector<cv::Point2d> calculate_unit_circled_points(int num_points);
 } // namespace Alg

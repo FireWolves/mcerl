@@ -19,7 +19,7 @@ class Environment
 {
 
 public:
-  Environment();
+  Environment(const std::string log_level);
 
   FrameData step(int agent_id, Action target_index);
 
@@ -35,10 +35,22 @@ public:
 
   /** some test function for pybind11 debugging **/
 
-  GridMap test_map_update(GridMap map, GridMap map_to_update, Coord pos, int sensor_range, int num_rays)
+  std::tuple<std::vector<Coord>, std::vector<Coord>, std::vector<Coord>, GridMap, GridMap> test_map_update(
+      GridMap map, GridMap map_to_update, Coord pos, int sensor_range, int num_rays, int expand_pixels)
   {
-    Alg::map_update(std::make_shared<GridMap>(map), &map_to_update, pos, sensor_range, num_rays);
-    return map_to_update;
+    auto &&static_mat = cv::Mat(map.rows(), map.cols(), CV_8UC1, map.data());
+    auto &&map_to_update_mat = cv::Mat(map_to_update.rows(), map_to_update.cols(), CV_8UC1, map_to_update.data());
+    auto &&basic_end_points = Alg::calculate_unit_circled_points(num_rays);
+    auto &&circle_end_points = Alg::calculate_circle_points_with_random_offset(basic_end_points, pos, sensor_range, 0,
+                                                                               M_PI / num_rays, map.rows(), map.cols());
+    auto &&circle_end_points_with_polygon = Alg::ray_trace(static_mat, pos, circle_end_points, 5);
+    auto &&roi_map = Alg::map_update_with_polygon(static_mat, map_to_update_mat, pos, circle_end_points_with_polygon);
+    std::vector<Coord> basic_end_points_i;
+    for (auto &i : basic_end_points)
+    {
+      basic_end_points_i.push_back(Coord(static_cast<int>(i.x * 10000), static_cast<int>(i.y * 10000)));
+    }
+    return {basic_end_points_i, circle_end_points, circle_end_points_with_polygon, map_to_update, roi_map};
   }
   std::vector<FrontierPoint> test_frontier_detection(GridMap map, int min_pixels, int max_pixels, int sensor_range)
   {
@@ -51,6 +63,7 @@ public:
     auto mat = cv::Mat(map.rows(), map.cols(), CV_8UC1, map.data());
     return mat.at<uint8_t>(coord);
   }
+
   void init(GridMap env_map, std::vector<Coord> poses, int num_agents, int max_steps, int max_steps_per_agent,
             int velocity, int sensor_range, int num_rays, int min_frontier_pixel, int max_frontier_pixel,
             float exploration_threshold);
@@ -60,6 +73,7 @@ private:
   std::shared_ptr<GridMap> env_map_;
   std::shared_ptr<GridMap> global_map_;
   std::vector<Coord> init_poses_;
+  std::vector<cv::Point2d> unit_circle_end_points_;
   int velocity_; // pixels per step
   int sensor_range_;
   int num_rays_;
@@ -72,6 +86,9 @@ private:
   float exploration_threshold_;
   bool is_done_;
   int tick_;
+  int ray_cast_random_offs_min_;
+  int ray_cast_random_offs_max_;
+  int ray_cast_expand_pixels_;
 
   void set_action(int agent_id, Action target_idx);
   FrameData get_frame_data(int agent_id);

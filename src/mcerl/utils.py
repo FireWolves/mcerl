@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from typing import Any, Callable, Collection
+from typing import Any, Collection
 
 import numpy as np
 import tensordict
-import torch
-import tqdm
 from tensordict import LazyStackedTensorDict
 
-import mcerl
-from mcerl.env import Env
+# from mcerl.env import Env
 
 
 def split_trajectories(trajectories) -> list[list[dict[str, Any]]]:
@@ -104,102 +100,102 @@ def random_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
     return frame_data
 
 
-def single_env_rollout(
-    env: Env,
-    grid_map: np.ndarray,
-    policy: Callable[[dict[str, Any]], dict[str, Any]] = random_policy,
-    agent_poses: Collection[tuple[int, int]] | None = None,
-    *,
-    env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    return_maps: bool = True,
-) -> list[list[dict[str, Any]]]:
-    """
-    Perform a single environment rollout.
-    after the rollout, we split the trajectory into agent-wise trajectories and pad them, then refine them.
-    Args:
-        env (Env): The environment object.
-        grid_map (np.ndarray): The grid map.
-        agent_poses (Collection[tuple[int, int]]): The initial positions of the agents. Defaults to None. If None, the agents are placed randomly.
-        policy (Callable[[dict], int]): The policy function that takes in an observation and returns an action index. Defaults to random_policy.
-        return_maps (bool): Whether to return the maps in the trajectory. Defaults to True.
-    Returns:
-        List[List[dict[str,Any]]]: A list of trajectories.
-    """
-    with torch.no_grad():
-        trajectories = []
-        frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
-        if env_transform is not None:
-            frame_data = env_transform(frame_data)
-        while True:
-            # if the agent is done, we set the action to 0 to wait other agent to finish
-            if (
-                frame_data["done"]
-                or len(frame_data["observation"]["frontier_points"]) == 0
-            ):
-                frame_data["action"] = 0
-            else:
-                # otherwise, we use the policy to get the action
-                frame_data = policy(frame_data)
-            # append the frame data with action to the trajectory
-            trajectories.append(frame_data)
-            # step the environment
-            frame_data = env.step(frame_data, return_maps=return_maps)
-            # if the environment is done, we append the last frame data and break
-            if env.done() is True:
-                trajectories.append(frame_data)
-                break
-            # if the environment is not done, and agent is not done, we transform the frame data
-            if env_transform is None or frame_data["done"]:
-                continue
-            frame_data = env_transform(frame_data)
-        rollouts = split_trajectories(trajectories)
-        rollouts = [pad_trajectory(rollout) for rollout in rollouts]
-        rollouts = [refine_trajectory(rollout) for rollout in rollouts]
-    return rollouts  # noqa:  RET504
+# def single_env_rollout(
+#     env: Env,
+#     grid_map: np.ndarray,
+#     policy: Callable[[dict[str, Any]], dict[str, Any]] = random_policy,
+#     agent_poses: Collection[tuple[int, int]] | None = None,
+#     *,
+#     env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+#     return_maps: bool = True,
+# ) -> list[list[dict[str, Any]]]:
+#     """
+#     Perform a single environment rollout.
+#     after the rollout, we split the trajectory into agent-wise trajectories and pad them, then refine them.
+#     Args:
+#         env (Env): The environment object.
+#         grid_map (np.ndarray): The grid map.
+#         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents. Defaults to None. If None, the agents are placed randomly.
+#         policy (Callable[[dict], int]): The policy function that takes in an observation and returns an action index. Defaults to random_policy.
+#         return_maps (bool): Whether to return the maps in the trajectory. Defaults to True.
+#     Returns:
+#         List[List[dict[str,Any]]]: A list of trajectories.
+#     """
+#     with torch.no_grad():
+#         trajectories = []
+#         frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
+#         if env_transform is not None:
+#             frame_data = env_transform(frame_data)
+#         while True:
+#             # if the agent is done, we set the action to 0 to wait other agent to finish
+#             if (
+#                 frame_data["done"]
+#                 or len(frame_data["observation"]["frontier_points"]) == 0
+#             ):
+#                 frame_data["action"] = 0
+#             else:
+#                 # otherwise, we use the policy to get the action
+#                 frame_data = policy(frame_data)
+#             # append the frame data with action to the trajectory
+#             trajectories.append(frame_data)
+#             # step the environment
+#             frame_data = env.step(frame_data, return_maps=return_maps)
+#             # if the environment is done, we append the last frame data and break
+#             if env.done() is True:
+#                 trajectories.append(frame_data)
+#                 break
+#             # if the environment is not done, and agent is not done, we transform the frame data
+#             if env_transform is None or frame_data["done"]:
+#                 continue
+#             frame_data = env_transform(frame_data)
+#         rollouts = split_trajectories(trajectories)
+#         rollouts = [pad_trajectory(rollout) for rollout in rollouts]
+#         rollouts = [refine_trajectory(rollout) for rollout in rollouts]
+#     return rollouts
 
 
-def multi_threaded_rollout(
-    env: Callable[..., mcerl.Environment],
-    policy: Callable[[dict[str, Any]], dict[str, Any]],
-    grid_map: np.ndarray,
-    agent_poses: Collection[tuple[int, int]] | None = None,
-    *,
-    return_maps: bool = False,
-    env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    num_threads: int,
-    epochs: int,
-) -> list[list[dict[str, Any]]]:
-    """
-    Perform a multi-threaded rollout.
-    Args:
-        env (Callable[..., mcerl.Environment]): The environment instance function.
-        policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action and state value (if critic is used).
-        grid_map (np.ndarray): The grid map.
-        agent_poses (Collection[tuple[int, int]]): The initial positions of the agents, if None, the agents are placed randomly.
-        num_threads (int): The number of threads to use.
-        epochs (int): The number of epochs to run.
-    Returns:
-        List[List[dict[str,Any]]]: A list of trajectories.
-    """
+# def multi_threaded_rollout(
+#     env: Callable[..., mcerl.Environment],
+#     policy: Callable[[dict[str, Any]], dict[str, Any]],
+#     grid_map: np.ndarray,
+#     agent_poses: Collection[tuple[int, int]] | None = None,
+#     *,
+#     return_maps: bool = False,
+#     env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+#     num_threads: int,
+#     epochs: int,
+# ) -> list[list[dict[str, Any]]]:
+#     """
+#     Perform a multi-threaded rollout.
+#     Args:
+#         env (Callable[..., mcerl.Environment]): The environment instance function.
+#         policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action and state value (if critic is used).
+#         grid_map (np.ndarray): The grid map.
+#         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents, if None, the agents are placed randomly.
+#         num_threads (int): The number of threads to use.
+#         epochs (int): The number of epochs to run.
+#     Returns:
+#         List[List[dict[str,Any]]]: A list of trajectories.
+#     """
 
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = []
-        for _ in range(epochs):
-            future = executor.submit(
-                single_env_rollout,
-                env(),
-                grid_map.copy(),
-                policy,
-                agent_poses,
-                return_maps=return_maps,
-                env_transform=env_transform,
-            )
-            futures.append(future)
-        rollouts = []
-        for future in tqdm.tqdm(futures, desc="Rollouts"):
-            rollout = future.result()
-            rollouts.extend(rollout)
-        return rollouts
+#     with ThreadPoolExecutor(max_workers=num_threads) as executor:
+#         futures = []
+#         for _ in range(epochs):
+#             future = executor.submit(
+#                 single_env_rollout,
+#                 env(),
+#                 grid_map.copy(),
+#                 policy,
+#                 agent_poses,
+#                 return_maps=return_maps,
+#                 env_transform=env_transform,
+#             )
+#             futures.append(future)
+#         rollouts = []
+#         for future in tqdm.tqdm(futures, desc="Rollouts"):
+#             rollout = future.result()
+#             rollouts.extend(rollout)
+#         return rollouts
 
 
 def exploration_reward_rescale(
