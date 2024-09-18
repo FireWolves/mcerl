@@ -55,7 +55,7 @@ class Actor(nn.Module):
             else:
                 action_index = torch.multinomial(probabilities.squeeze(), 1)
             log_prob = torch.log(probabilities[action_index])
-            entropy = torch.mean(probabilities * torch.log(probabilities + 1e-10))
+            entropy = torch.mean(probabilities * torch.log(probabilities + 1e-10)).reshape(-1)
             if index == 0:
                 actions = action_index
                 log_probs = log_prob

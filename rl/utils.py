@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import random
 from typing import Any
 
@@ -32,6 +33,12 @@ def to_graph(frame_data, *, device: torch.device | None = None) -> dict[str, Any
     Returns:
         dict: The updated frame data dictionary with the graph representation added.
     """
+    if (
+        frame_data["observation"]["frontier_points"] is None
+        or len(frame_data["observation"]["frontier_points"]) == 0
+    ):
+        logging.warning("No frontier points found in frame data.")
+        return frame_data
 
     frame_frontier_points = torch.tensor(frame_data["observation"]["frontier_points"])
     frame_agent_poses = torch.tensor(frame_data["observation"]["pos"])
@@ -50,9 +57,17 @@ def to_graph(frame_data, *, device: torch.device | None = None) -> dict[str, Any
         x[0, -2:] = frontier_point[:2]
         xs.append(x)
     edge_index = torch.arange(frame_agent_poses.shape[0]).repeat(2, 1)
+    edge_index_before = edge_index.clone()
     edge_index[0] = 0
     edge_index = edge_index[..., 1:]
     edge_index = to_undirected(edge_index)
+    logging.debug(
+        "edge_index before: %s, edge_index after: %s, xs: %s, batch_size: %s",
+        edge_index_before,
+        edge_index,
+        xs,
+        frame_frontier_points.shape[0],
+    )
     data = DataLoader(
         [Data(x=x, edge_index=edge_index) for x in xs],
         batch_size=frame_frontier_points.shape[0],
@@ -80,45 +95,33 @@ class Sampler:
         self._length = length
         self._batch_size = batch_size
 
-    def random_sample(self):
+    def random_sample(self) -> dict[str, Any]:
         indices = random.sample(range(self._length), self._batch_size)
         graphs = [self.graphs[i] for i in indices]  # type: ignore  # noqa: PGH003
         frame_indices = None
         sampled_graphs = []
         for graph in graphs:
             if frame_indices is None:
-                frame_indices = torch.zeros(graph.num_graphs)
+                frame_indices = [torch.zeros(graph.num_graphs)]
             else:
-                frame_indices = torch.cat(
-                    [
-                        frame_indices,
-                        torch.ones(graph.num_graphs) * (frame_indices.max() + 1),
-                    ]
+                frame_indices.append(
+                    torch.ones(graph.num_graphs) * (frame_indices[-1].max() + 1)
                 )
             for i in range(graph.num_graphs):
                 sampled_graphs.append(graph[i])
+        frame_indices = torch.cat(frame_indices)  # type: ignore  # noqa: PGH003
         sampled_graphs = DataLoader(
             sampled_graphs,
             batch_size=len(sampled_graphs),
         )
         sampled_graphs = next(iter(sampled_graphs))
 
-        return copy.deepcopy(
-            {
-                **{key: self.__dict__[key][indices] for key in self._keys},
-                "graphs": sampled_graphs,
-                "frame_indices": frame_indices,
-            }
-        )
+        return {
+            **{key: self.__dict__[key][indices] for key in self._keys},
+            "graphs": sampled_graphs,
+            "frame_indices": frame_indices,
+        }
 
-    # def __iter__(self):
-    #     return self
-
-    # def __next__(self) -> list[dict[str, Any]]:
-    #     if self._epochs > 0:
-    #         self._epochs -= 1
-    #         return self.random_sample()
-    #     raise StopIteration
 
 def check_dict_struct(d: dict[str, Any], prefix: str = "") -> list:
     flattened_keys = []

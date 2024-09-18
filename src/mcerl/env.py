@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from typing import Any, Callable, Collection
 
 import numpy as np
@@ -51,8 +52,8 @@ class Env:
 
     def __init__(
         self,
-        log_level: str = "INFO",
-        log_path: str = "output.log",
+        cpp_env_log_level: str,
+        cpp_env_log_path: str,
     ) -> None:
         """
         Initializes a new instance of the Env class.
@@ -70,7 +71,12 @@ class Env:
         None
 
         """
-        self._env: mcerl.Environment = mcerl.Environment(log_level, log_path)
+        self._logger = logging.getLogger()
+        self._logger.debug("Creating pybind environment object")
+        self._env: mcerl.Environment = mcerl.Environment(
+            cpp_env_log_level, cpp_env_log_path
+        )
+        self._logger.debug("Pybind environment object created")
 
     @property
     def last_data(self) -> dict[str, Any]:
@@ -95,41 +101,100 @@ class Env:
         policy: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         **kwargs,
     ) -> list[list[dict[str, Any]]]:
+        # Multithreading is not supported with requires_grad=True
         requires_grad = kwargs.pop("requires_grad", False)
+        return_maps = kwargs.get("return_maps", None)
+        self._logger.debug(
+            "Start rollout with: require grad: %s, return maps: %s",
+            requires_grad,
+            return_maps,
+        )
+
+        if policy is None:
+            policy = random_policy
+            self._logger.debug("using random policy")
+        else:
+            self._logger.debug("using network policy")
+
+        trajectories = []
         with torch.no_grad() if not requires_grad else contextlib.nullcontext():
-            if policy is None:
-                policy = random_policy
-            trajectories = []
+            self._logger.debug("Resetting env")
             frame_data = self.reset(**kwargs)
+            self._logger.debug(
+                "Env reset, agent id: %s, num of frontiers: %s, agent done: %s, env done: %s",
+                self.get_agent_id(frame_data),
+                self.get_num_frontiers(frame_data),
+                self.get_done(frame_data),
+                self.done(),
+            )
+
             if self.env_transform is not None:
+                self._logger.debug("Transforming frame data")
                 frame_data = self.env_transform(frame_data)
+                self._logger.debug("Frame data transformed")
+
+            self._logger.debug("Stepping env")
             while True:
                 # if the agent is done, we set the action to 0 to wait other agent to finish
                 if (
                     frame_data["done"]
                     or len(frame_data["observation"]["frontier_points"]) == 0
+                    or self.done()
                 ):
+                    self._logger.debug(
+                        "Agent done: %s or frontier points empty: %s or env done: %s, setting dummy action 0",
+                        self.get_done(frame_data),
+                        self.get_num_frontiers(frame_data),
+                        self.done(),
+                    )
                     frame_data["action"] = 0
                 else:
                     # otherwise, we use the policy to get the action
+                    self._logger.debug("Getting action from policy")
                     frame_data = policy(frame_data)
+                    self._logger.debug("Action got: %s", frame_data["action"])
+
                 # append the frame data with action to the trajectory
+                self._logger.debug("Adding frame data to trajectory")
                 trajectories.append(frame_data)
+                self._logger.debug("Frame data added")
+
                 # step the environment
+                self._logger.debug("Stepping cpp environment")
                 frame_data = self.step(frame_data, return_maps=self.return_maps)
+                self._logger.debug(
+                    "Cpp env stepped, frame data got agent id: %s, num of frontiers: %s, agent done: %s, env done: %s",
+                    self.get_agent_id(frame_data),
+                    self.get_num_frontiers(frame_data),
+                    self.get_done(frame_data),
+                    self.done(),
+                )
+
+                # transform function should consider if environment is done,
+                if self.env_transform is not None:
+                    self._logger.debug("Transforming frame data")
+                    frame_data = self.env_transform(frame_data)
+                    self._logger.debug("Frame data transformed")
+
                 # if the environment is done, we append the last frame data and break
                 if self.done() is True:
+                    self._logger.debug("Env done, adding last frame data to trajectory")
+                    frame_data["done"] = True
                     trajectories.append(frame_data)
                     break
-                if (
-                    self.env_transform is not None
-                ):  # transform function should consider  if environment is done,
-                    frame_data = self.env_transform(frame_data)
 
+            # split the trajectories into rollouts
+            self._logger.debug("Splitting trajectories")
             rollouts = split_trajectories(trajectories)
+            self._logger.debug("Trajectories splitted")
+
+            self._logger.debug("Padding and refining trajectories")
             rollouts = [pad_trajectory(rollout) for rollout in rollouts]
             rollouts = [refine_trajectory(rollout) for rollout in rollouts]
-            return rollouts  # noqa:  RET504
+            self._logger.debug("Trajectories padded and refined")
+
+            self._logger.debug("Rollout done")
+            return rollouts
 
     def reset(
         self,
@@ -381,3 +446,12 @@ class Env:
             if check_around(x, y, grid_map, radius=valid_radius):
                 valid_poses.append((x, y))
         return valid_poses
+
+    def get_agent_id(self, frame_data: dict[str, Any]) -> int:
+        return frame_data["info"]["agent_id"]
+
+    def get_num_frontiers(self, frame_data: dict[str, Any]) -> int:
+        return len(frame_data["observation"]["frontier_points"])
+
+    def get_done(self, frame_data: dict[str, Any]) -> bool:
+        return frame_data["done"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any, Collection
 
@@ -100,107 +101,9 @@ def random_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
     return frame_data
 
 
-# def single_env_rollout(
-#     env: Env,
-#     grid_map: np.ndarray,
-#     policy: Callable[[dict[str, Any]], dict[str, Any]] = random_policy,
-#     agent_poses: Collection[tuple[int, int]] | None = None,
-#     *,
-#     env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-#     return_maps: bool = True,
-# ) -> list[list[dict[str, Any]]]:
-#     """
-#     Perform a single environment rollout.
-#     after the rollout, we split the trajectory into agent-wise trajectories and pad them, then refine them.
-#     Args:
-#         env (Env): The environment object.
-#         grid_map (np.ndarray): The grid map.
-#         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents. Defaults to None. If None, the agents are placed randomly.
-#         policy (Callable[[dict], int]): The policy function that takes in an observation and returns an action index. Defaults to random_policy.
-#         return_maps (bool): Whether to return the maps in the trajectory. Defaults to True.
-#     Returns:
-#         List[List[dict[str,Any]]]: A list of trajectories.
-#     """
-#     with torch.no_grad():
-#         trajectories = []
-#         frame_data = env.reset(grid_map, agent_poses, return_maps=return_maps)
-#         if env_transform is not None:
-#             frame_data = env_transform(frame_data)
-#         while True:
-#             # if the agent is done, we set the action to 0 to wait other agent to finish
-#             if (
-#                 frame_data["done"]
-#                 or len(frame_data["observation"]["frontier_points"]) == 0
-#             ):
-#                 frame_data["action"] = 0
-#             else:
-#                 # otherwise, we use the policy to get the action
-#                 frame_data = policy(frame_data)
-#             # append the frame data with action to the trajectory
-#             trajectories.append(frame_data)
-#             # step the environment
-#             frame_data = env.step(frame_data, return_maps=return_maps)
-#             # if the environment is done, we append the last frame data and break
-#             if env.done() is True:
-#                 trajectories.append(frame_data)
-#                 break
-#             # if the environment is not done, and agent is not done, we transform the frame data
-#             if env_transform is None or frame_data["done"]:
-#                 continue
-#             frame_data = env_transform(frame_data)
-#         rollouts = split_trajectories(trajectories)
-#         rollouts = [pad_trajectory(rollout) for rollout in rollouts]
-#         rollouts = [refine_trajectory(rollout) for rollout in rollouts]
-#     return rollouts
-
-
-# def multi_threaded_rollout(
-#     env: Callable[..., mcerl.Environment],
-#     policy: Callable[[dict[str, Any]], dict[str, Any]],
-#     grid_map: np.ndarray,
-#     agent_poses: Collection[tuple[int, int]] | None = None,
-#     *,
-#     return_maps: bool = False,
-#     env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-#     num_threads: int,
-#     epochs: int,
-# ) -> list[list[dict[str, Any]]]:
-#     """
-#     Perform a multi-threaded rollout.
-#     Args:
-#         env (Callable[..., mcerl.Environment]): The environment instance function.
-#         policy (Callable[[dict[str, Any]], dict[str, Any]]): The policy function that takes in frame data with observation and returns with action and state value (if critic is used).
-#         grid_map (np.ndarray): The grid map.
-#         agent_poses (Collection[tuple[int, int]]): The initial positions of the agents, if None, the agents are placed randomly.
-#         num_threads (int): The number of threads to use.
-#         epochs (int): The number of epochs to run.
-#     Returns:
-#         List[List[dict[str,Any]]]: A list of trajectories.
-#     """
-
-#     with ThreadPoolExecutor(max_workers=num_threads) as executor:
-#         futures = []
-#         for _ in range(epochs):
-#             future = executor.submit(
-#                 single_env_rollout,
-#                 env(),
-#                 grid_map.copy(),
-#                 policy,
-#                 agent_poses,
-#                 return_maps=return_maps,
-#                 env_transform=env_transform,
-#             )
-#             futures.append(future)
-#         rollouts = []
-#         for future in tqdm.tqdm(futures, desc="Rollouts"):
-#             rollout = future.result()
-#             rollouts.extend(rollout)
-#         return rollouts
-
-
 def exploration_reward_rescale(
     trajectory: list[dict[str, Any]],
-    max_value: float,
+    a: float,
 ) -> list[dict[str, Any]]:
     """
     Standardize the exploration reward to [0,1].
@@ -210,14 +113,14 @@ def exploration_reward_rescale(
         dict[str, Any]: The updated frame data.
     """
     for i in range(len(trajectory)):
-        trajectory[i]["next"]["reward"]["exploration_reward"] = (
-            trajectory[i]["next"]["reward"]["exploration_reward"] / max_value
+        trajectory[i]["next"]["reward"]["exploration_reward"] = math.tanh(
+            trajectory[i]["next"]["reward"]["exploration_reward"] / a
         )
     return trajectory
 
 
 def delta_time_reward_standardize(
-    trajectory: list[dict[str, Any]],
+    trajectory: list[dict[str, Any]], *, sigma: float, b: int, x_star: float
 ) -> list[dict[str, Any]]:
     """
     Standardize the delta time reward to [0,1] (approximately).
@@ -226,19 +129,21 @@ def delta_time_reward_standardize(
     Returns:
         dict[str, Any]: The updated frame data.
     """
-    max_value = max(
-        [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
-    )
-    min_value = min(
-        [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
-    )
+    # max_value = max(
+    #     [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
+    # )
+    # min_value = min(
+    #     [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
+    # )
     total_value = sum(
         [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
     )
     for i in range(len(trajectory)):
-        trajectory[i]["next"]["reward"]["time_step_reward"] = -(
-            trajectory[i]["next"]["reward"]["time_step_reward"] - min_value
-        ) / (max_value - min_value)
+        trajectory[i]["next"]["reward"]["time_step_reward"] = 1 / (
+            ((trajectory[i]["next"]["reward"]["time_step_reward"] - x_star) / sigma)
+            ** (2 * b)
+            + 1
+        )
         trajectory[i]["info"].update({"total_time_step": total_value})
     return trajectory
 
@@ -263,6 +168,3 @@ def reward_sum(
         )
         trajectory[i].update({"reward_to_go": reward_to_go})
     return trajectory
-
-
-

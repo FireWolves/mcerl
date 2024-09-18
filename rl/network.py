@@ -72,7 +72,7 @@ class GINPolicyNetwork(torch.nn.Module):
         self.lin1 = Linear(dim_h * 3, dim_h * 3)
         self.lin2 = Linear(dim_h * 3, 1)  # Output 1 value for regression
 
-    def forward(self, x, edge_index, batch, *, masks=None):
+    def forward(self, x, edge_index, batch, *, masks=None):  # noqa: ARG002
         # x:nodes of all targets:[n_agents*n_targets,n_node_features ]
         # edge_index: [2, 2 * n_targets(n_subgraphs)*n_agents(n_nodes_in_subgraph)]
         # batch: [n_subgraphs]
@@ -90,7 +90,7 @@ class GINPolicyNetwork(torch.nn.Module):
         h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
-        h = F.dropout(h, p=0.5, training=self.training)
+        h = F.dropout(h, p=0.3, training=self.training)
 
         return self.lin2(h)
 
@@ -145,5 +145,5 @@ class GINValueNetwork(torch.nn.Module):
         h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
-        h = F.dropout(h, p=0.5, training=self.training)
+        h = F.dropout(h, p=0.3, training=self.training)
         return self.lin2(h)

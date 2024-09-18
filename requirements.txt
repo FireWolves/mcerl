@@ -16,6 +16,7 @@ certifi==2024.7.4
 charset-normalizer==3.3.2
 cloudpickle==3.0.0
 comm==0.2.2
+contexttimer==0.3.3
 contourpy==1.2.1
 cycler==0.12.1
 debugpy==1.8.5
@@ -34,17 +35,21 @@ imagesize==1.4.1
 iniconfig==2.0.0
 ipykernel==6.29.5
 ipython==8.26.0
+ipywidgets==8.1.5
 jedi==0.19.1
 Jinja2==3.1.4
 joblib==1.4.2
 jupyter_client==8.6.2
 jupyter_core==5.7.2
+jupyterlab_widgets==3.0.13
 kiwisolver==1.4.5
 Markdown==3.7
+markdown-it-py==3.0.0
 MarkupSafe==2.1.5
 matplotlib==3.9.2
 matplotlib-inline==0.1.7
--e git+https://github.com/FireWolves/mcerl.git@4417e1d8f6fb38abe9c90624f342d4c8d972660f#egg=mcerl
+-e git+https://github.com/FireWolves/mcerl.git@62a134ec4b9e1d66771c747a68ebbc89cf834f88#egg=mcerl
+mdurl==0.1.2
 mpmath==1.3.0
 multidict==6.0.5
 nest-asyncio==1.6.0
@@ -62,6 +67,7 @@ nvidia-cusparse-cu12==12.3.0.142
 nvidia-nccl-cu12==2.20.5
 nvidia-nvjitlink-cu12==12.4.99
 nvidia-nvtx-cu12==12.4.99
+opencv-python==4.10.0.84
 orjson==3.10.7
 packaging==24.0
 pandas==2.2.2
@@ -84,6 +90,7 @@ python-dateutil==2.9.0.post0
 pytz==2024.2
 pyzmq==26.2.0
 requests==2.32.0
+rich==13.8.1
 scikit-learn==1.5.1
 scipy==1.8.1
 six==1.16.0
@@ -122,4 +129,5 @@ tzdata==2024.1
 urllib3==2.2.2
 wcwidth==0.2.13
 Werkzeug==3.0.4
+widgetsnbextension==4.0.13
 yarl==1.11.0
