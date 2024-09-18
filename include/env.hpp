@@ -19,7 +19,7 @@ class Environment
 {
 
 public:
-  Environment(const std::string log_level);
+  Environment(const std::string log_level, const std::string log_file);
 
   FrameData step(int agent_id, Action target_index);
 

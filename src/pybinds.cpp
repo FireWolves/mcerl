@@ -60,7 +60,7 @@ template <> struct type_caster<cv::Point>
 PYBIND11_MODULE(_core, env)
 {
   py::class_<Env::Environment>(env, "Environment")
-      .def(py::init<const std::string>())
+      .def(py::init<const std::string, const std::string>())
       .def("reset", &Env::Environment::reset, py::call_guard<py::gil_scoped_release>())
       .def("step", &Env::Environment::step, py::call_guard<py::gil_scoped_release>())
       .def("done", &Env::Environment::done)

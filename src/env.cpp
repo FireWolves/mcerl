@@ -1,6 +1,5 @@
 #include "env.hpp"
 #include "algorithms.hpp"
-#include "spdlog/cfg/env.h"
 #include <execution>
 #include <iostream>
 #include <spdlog/sinks/basic_file_sink.h>
@@ -26,16 +25,15 @@ namespace Env
  * - get_next_act_agent(): Returns the ID of the next agent that requires a new target.
  * - step_once(): Performs a single step for all agents in the environment.
  */
-Environment::Environment(const std::string log_level)
+Environment::Environment(const std::string log_level, const std::string log_file)
 {
-  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("logs/debug.txt", true);
+  auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file, true);
 
   // 创建一个日志器，将日志输出到文件
   auto logger = std::make_shared<spdlog::logger>("ENV", file_sink);
 
   // 设置日志器的日志级别
   spdlog::level::level_enum level = spdlog::level::from_str(log_level);
-  std::cout << "log_level: " << spdlog::level::to_string_view(level).data() << std::endl;
   logger->set_level(level);
   logger->flush_on(level);
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 from typing import Any, Callable, Collection
 
 import numpy as np
 import numpy.typing as npt
+import torch
 
 import mcerl
 from mcerl.utils import (
@@ -50,6 +52,7 @@ class Env:
     def __init__(
         self,
         log_level: str = "INFO",
+        log_path: str = "output.log",
     ) -> None:
         """
         Initializes a new instance of the Env class.
@@ -67,7 +70,7 @@ class Env:
         None
 
         """
-        self._env: mcerl.Environment = mcerl.Environment(log_level)
+        self._env: mcerl.Environment = mcerl.Environment(log_level, log_path)
 
     @property
     def last_data(self) -> dict[str, Any]:
@@ -92,39 +95,41 @@ class Env:
         policy: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         **kwargs,
     ) -> list[list[dict[str, Any]]]:
-        if policy is None:
-            policy = random_policy
-        trajectories = []
-        frame_data = self.reset(**kwargs)
-        if self.env_transform is not None:
-            frame_data = self.env_transform(frame_data)
-        while True:
-            # if the agent is done, we set the action to 0 to wait other agent to finish
-            if (
-                frame_data["done"]
-                or len(frame_data["observation"]["frontier_points"]) == 0
-            ):
-                frame_data["action"] = 0
-            else:
-                # otherwise, we use the policy to get the action
-                frame_data = policy(frame_data)
-            # append the frame data with action to the trajectory
-            trajectories.append(frame_data)
-            # step the environment
-            frame_data = self.step(frame_data, return_maps=self.return_maps)
-            # if the environment is done, we append the last frame data and break
-            if self.done() is True:
-                trajectories.append(frame_data)
-                break
-            if (
-                self.env_transform is not None
-            ):  # transform function should consider  if environment is done,
+        requires_grad = kwargs.pop("requires_grad", False)
+        with torch.no_grad() if not requires_grad else contextlib.nullcontext():
+            if policy is None:
+                policy = random_policy
+            trajectories = []
+            frame_data = self.reset(**kwargs)
+            if self.env_transform is not None:
                 frame_data = self.env_transform(frame_data)
+            while True:
+                # if the agent is done, we set the action to 0 to wait other agent to finish
+                if (
+                    frame_data["done"]
+                    or len(frame_data["observation"]["frontier_points"]) == 0
+                ):
+                    frame_data["action"] = 0
+                else:
+                    # otherwise, we use the policy to get the action
+                    frame_data = policy(frame_data)
+                # append the frame data with action to the trajectory
+                trajectories.append(frame_data)
+                # step the environment
+                frame_data = self.step(frame_data, return_maps=self.return_maps)
+                # if the environment is done, we append the last frame data and break
+                if self.done() is True:
+                    trajectories.append(frame_data)
+                    break
+                if (
+                    self.env_transform is not None
+                ):  # transform function should consider  if environment is done,
+                    frame_data = self.env_transform(frame_data)
 
-        rollouts = split_trajectories(trajectories)
-        rollouts = [pad_trajectory(rollout) for rollout in rollouts]
-        rollouts = [refine_trajectory(rollout) for rollout in rollouts]
-        return rollouts  # noqa:  RET504
+            rollouts = split_trajectories(trajectories)
+            rollouts = [pad_trajectory(rollout) for rollout in rollouts]
+            rollouts = [refine_trajectory(rollout) for rollout in rollouts]
+            return rollouts  # noqa:  RET504
 
     def reset(
         self,

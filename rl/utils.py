@@ -8,7 +8,6 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 from torch_geometric.utils import to_undirected
-from zmq import has
 
 
 def build_graphs(trajectory: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -120,3 +119,12 @@ class Sampler:
     #         self._epochs -= 1
     #         return self.random_sample()
     #     raise StopIteration
+
+def check_dict_struct(d: dict[str, Any], prefix: str = "") -> list:
+    flattened_keys = []
+    for k, v in d.items():
+        if isinstance(v, dict):
+            flattened_keys.extend(check_dict_struct(v, prefix + k + "."))
+        else:
+            flattened_keys.append(prefix + k)
+    return flattened_keys
