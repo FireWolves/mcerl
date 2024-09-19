@@ -8,3 +8,4 @@ logs/*
 runs/*
 *.pt
 output/*
+.venv/*
