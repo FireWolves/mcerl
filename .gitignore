@@ -8,4 +8,3 @@ runs/*
 *.pt
 output/*
 .venv/*
-train.py
