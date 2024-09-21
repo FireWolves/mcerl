@@ -45,9 +45,7 @@ def pad_trajectory(trajectory) -> list[dict[str, Any]]:
     return trajectory_out
 
 
-def refine_trajectory(
-    trajectory, exclude_keys: Collection[str] = ("action", "log_prob")
-) -> list[dict[str, Any]]:
+def refine_trajectory(trajectory, exclude_keys: Collection[str] = ("action", "log_prob")) -> list[dict[str, Any]]:
     """transform the trajectory
     TODO: we need to use hard code to mark the keys to exclude, maybe we can use a more elegant way to do this
     (Obs_k,Info_k,Done_k Action_k, Reward_k-1)
@@ -60,16 +58,8 @@ def refine_trajectory(
         refined_trajectory.append(
             deepcopy(
                 {
-                    **{
-                        key: value
-                        for key, value in trajectory[i].items()
-                        if key != "reward"
-                    },
-                    "next": {
-                        key: value
-                        for key, value in trajectory[i + 1].items()
-                        if key not in exclude_keys
-                    },
+                    **{key: value for key, value in trajectory[i].items() if key != "reward"},
+                    "next": {key: value for key, value in trajectory[i + 1].items() if key not in exclude_keys},
                 }
             )
         )
@@ -81,9 +71,7 @@ def stack_trajectory(trajectory):
     """
     stack trajectory to tensordict
     """
-    return LazyStackedTensorDict.maybe_dense_stack(
-        [tensordict.TensorDict(frame_data) for frame_data in trajectory]
-    )
+    return LazyStackedTensorDict.maybe_dense_stack([tensordict.TensorDict(frame_data) for frame_data in trajectory])
 
 
 def random_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
@@ -101,10 +89,7 @@ def random_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
     return frame_data
 
 
-def exploration_reward_rescale(
-    trajectory: list[dict[str, Any]],
-    a: float,
-) -> list[dict[str, Any]]:
+def exploration_reward_rescale(trajectory: list[dict[str, Any]], a: float, b: float) -> list[dict[str, Any]]:
     """
     Standardize the exploration reward to [0,1].
     Args:
@@ -113,8 +98,8 @@ def exploration_reward_rescale(
         dict[str, Any]: The updated frame data.
     """
     for i in range(len(trajectory)):
-        trajectory[i]["next"]["reward"]["exploration_reward"] = math.tanh(
-            trajectory[i]["next"]["reward"]["exploration_reward"] / a
+        trajectory[i]["next"]["reward"]["exploration_reward"] = (
+            0.5 * np.tanh((trajectory[i]["next"]["reward"]["exploration_reward"] - a) / b) + 0.5
         )
     return trajectory
 
@@ -135,22 +120,16 @@ def delta_time_reward_standardize(
     # min_value = min(
     #     [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
     # )
-    total_value = sum(
-        [frame["next"]["reward"]["time_step_reward"] for frame in trajectory]
-    )
+    total_value = sum([frame["next"]["reward"]["time_step_reward"] for frame in trajectory])
     for i in range(len(trajectory)):
         trajectory[i]["next"]["reward"]["time_step_reward"] = 1 / (
-            ((trajectory[i]["next"]["reward"]["time_step_reward"] - x_star) / sigma)
-            ** (2 * b)
-            + 1
+            ((trajectory[i]["next"]["reward"]["time_step_reward"] - x_star) / sigma) ** (2 * b) + 1
         )
         trajectory[i]["info"].update({"total_time_step": total_value})
     return trajectory
 
 
-def reward_sum(
-    trajectory: list[dict[str, Any]], gamma: float = 0.95
-) -> list[dict[str, Any]]:
+def reward_sum(trajectory: list[dict[str, Any]], gamma: float = 0.95) -> list[dict[str, Any]]:
     """
     Sum the rewards in the trajectory.
     Args:
@@ -160,11 +139,7 @@ def reward_sum(
     """
     reward_to_go = 0
     for i in range(len(trajectory) - 1, -1, -1):
-        trajectory[i]["next"]["reward"].update(
-            {"total_reward": sum(trajectory[i]["next"]["reward"].values())}
-        )
-        reward_to_go = (
-            trajectory[i]["next"]["reward"]["total_reward"] + gamma * reward_to_go
-        )
+        trajectory[i]["next"]["reward"].update({"total_reward": sum(trajectory[i]["next"]["reward"].values())})
+        reward_to_go = trajectory[i]["next"]["reward"]["total_reward"] + gamma * reward_to_go
         trajectory[i].update({"reward_to_go": reward_to_go})
     return trajectory

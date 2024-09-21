@@ -15,7 +15,6 @@ find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(OpenCV REQUIRED)
 find_package(Boost REQUIRED)
 find_package(spdlog REQUIRED)
-find_package(TBB REQUIRED)
 
 add_subdirectory(third-party/pybind11)
 
@@ -24,7 +23,7 @@ file(GLOB SOURCES "src/*.cpp")
 
 python_add_library(_core MODULE ${SOURCES} WITH_SOABI)
 target_link_libraries(_core PRIVATE pybind11::headers spdlog::spdlog ${OpenCV_LIBS})
-target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} TBB::tbb)
+target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 target_compile_features(_core PRIVATE cxx_std_20)
 
 # This is passing in the version as a define just as an example
