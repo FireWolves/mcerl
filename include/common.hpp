@@ -63,6 +63,7 @@ struct Info
   float agent_exploration_rate;  /**< The exploration rate of the agent. */
   int delta_time;                /**< The time difference in the environment. */
   int agent_explored_pixels;     /**< The number of explored pixels in the environment. */
+  int tick;                     /**< The tick count in the environment. */
 };
 
 /**

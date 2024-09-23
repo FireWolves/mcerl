@@ -133,20 +133,26 @@ FrameData Environment::reset(GridMap env_map, std::vector<Coord> poses, int num_
   spdlog::trace("Map updated and merged");
 
   spdlog::trace("Getting frame data for agent {}", agent_id);
-  auto &&frame_data = get_frame_data(agent_id);
+  auto &&frame_data = get_frame_data(agent_id, true);
   spdlog::trace("Frame data retrieved");
 
   spdlog::debug("Environment reset");
   return frame_data;
 }
 
-FrameData Environment::step(int agent_id, Action target_index)
+FrameData Environment::step(int agent_id, Action target_index, bool check_validation, bool set_action)
 {
   spdlog::debug("Stepping environment for agent {} with target index {}", agent_id, target_index);
-
-  spdlog::trace("Setting agent action");
-  set_action(agent_id, target_index);
-  spdlog::trace("Agent action set");
+  if (set_action)
+  {
+    spdlog::trace("Setting agent action");
+    this->set_action(agent_id, target_index);
+    spdlog::trace("Agent action set");
+  }
+  else
+  {
+    spdlog::trace("Skip setting agent action");
+  }
 
   spdlog::trace("Checking if any agent requires a new target");
   auto next_act_agent = get_next_act_agent();
@@ -166,7 +172,7 @@ FrameData Environment::step(int agent_id, Action target_index)
   }
 
   spdlog::trace("Getting frame data for agent {}", next_act_agent);
-  auto &&frame_data = get_frame_data(next_act_agent);
+  auto &&frame_data = get_frame_data(next_act_agent, check_validation);
   spdlog::trace("Frame data retrieved");
 
   spdlog::debug("Environment stepped");
@@ -262,7 +268,7 @@ void Environment::set_action(int agent_id, Action target_idx)
  * @note the agent_id should be valid and not done
  * @return FrameData
  */
-FrameData Environment::get_frame_data(int agent_id)
+FrameData Environment::get_frame_data(int agent_id, bool check_validation)
 {
   spdlog::debug("Getting frame data for agent {}", agent_id);
 
@@ -274,6 +280,7 @@ FrameData Environment::get_frame_data(int agent_id)
   auto &&agent = agents_[agent_id];
 
   info.agent_id = agent.info.id;
+  info.tick = tick_;
 
   spdlog::trace("Updating delta time and step count");
   info.delta_time = agent.info.delta_time;
@@ -304,15 +311,23 @@ FrameData Environment::get_frame_data(int agent_id)
       Alg::frontier_detection(agent.state.map.get(), min_frontier_pixel_, max_frontier_pixel_, sensor_range_);
   spdlog::trace("Frontiers detected. size: {}", frontiers.size());
 
-  spdlog::trace("Checking if frontiers are valid");
   std::vector<FrontierPoint> valid_frontiers;
-  for (auto &frontier : frontiers)
+  if (!check_validation)
   {
-    if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 4))
+    spdlog::trace("Skip checking if frontiers are valid");
+    valid_frontiers = frontiers;
+  }
+  else
+  {
+    spdlog::trace("Checking if frontiers are valid");
+    for (auto &frontier : frontiers)
     {
-      frontier.path = Alg::a_star(agent.state.map.get(), agent.state.pos, frontier.pos);
-      frontier.distance = Alg::calculate_path_distance(frontier.path);
-      valid_frontiers.push_back(frontier);
+      if (Alg::is_frontier_valid(global_map_, frontier, sensor_range_, sensor_range_ * sensor_range_ / 1.5))
+      {
+        frontier.path = Alg::a_star(global_map_.get(), agent.state.pos, frontier.pos);
+        frontier.distance = Alg::calculate_path_distance(frontier.path);
+        valid_frontiers.push_back(frontier);
+      }
     }
   }
   agent.state.frontier_points = valid_frontiers;
@@ -533,6 +548,53 @@ int Environment::step_once()
   }
   spdlog::warn("Step limit reached, setting done flag for environment and exit step once");
   this->is_done_ = true;
+  return INVALID_AGENT_ID;
+}
+int Environment::step_eval()
+{
+  spdlog::debug("Step env once");
+
+  spdlog::trace("Ticking env");
+  tick_++;
+  if (this->is_done_ || std::find_if(agents_.begin(), agents_.end(),
+                                     [](const Agent &agent) { return agent.done.done != true; }) == agents_.end())
+  {
+    spdlog::debug("All agents done or environment done, setting done flag for environment and exit step once");
+    this->is_done_ = true;
+    return INVALID_AGENT_ID;
+  }
+  spdlog::trace("Agents done checked. Looping agents at tick: {}", tick_);
+
+  for (auto &agent : agents_)
+  {
+    spdlog::trace("Agent: {}", agent.info.id);
+
+    spdlog::trace("Checking if agent reached target");
+    if (agent.state.executing_path == nullptr || agent.state.executing_path->empty())
+    {
+      spdlog::debug("Agent {} reached target. Exit step once", agent.info.id);
+      return agent.info.id;
+    }
+
+    spdlog::trace("Moving agent");
+    Coord next_pos = agent.state.executing_path->front();
+    agent.state.executing_path->pop_front();
+    agent.state.pos = next_pos;
+
+    spdlog::trace("Updating map");
+    Alg::map_update(env_map_, agent.state.map.get(), agent.state.pos, agent.info.sensor_range, agent.info.num_rays);
+
+    spdlog::trace("Calculating valid explored pixels and recording delta time");
+    auto valid_explored_pixels = Alg::calculate_valid_explored_pixels(global_map_, agent.state.map.get());
+    agent.reward.new_explored_pixels += valid_explored_pixels;
+    agent.info.delta_time++;
+    spdlog::info("Valid explored pixels: {}, all new explored pixels: {}", valid_explored_pixels,
+                 agent.reward.new_explored_pixels);
+
+    spdlog::trace("Merging map to global map");
+    Alg::map_merge(global_map_, agent.state.map.get());
+    spdlog::trace("Map merged");
+  }
   return INVALID_AGENT_ID;
 }
 

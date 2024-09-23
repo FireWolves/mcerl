@@ -71,7 +71,18 @@ PYBIND11_MODULE(_core, env)
       .def("test_frontier_detection", &Env::Environment::test_frontier_detection)
       .def("test_a_star", &Env::Environment::test_a_star)
       .def("test_xy_coord", &Env::Environment::test_xy_coord)
-      .def("test_xy_cv_mat", &Env::Environment::test_xy_cv_mat);
+      .def("test_xy_cv_mat", &Env::Environment::test_xy_cv_mat)
+      .def("agent_path", &Env::Environment::agent_path)
+      .def("agent_pos", &Env::Environment::agent_pos)
+      .def("agent_target", &Env::Environment::agent_target)
+      .def("agent_step_cnt", &Env::Environment::agent_step_cnt)
+      .def("tick", &Env::Environment::tick)
+      .def("step_cnt", &Env::Environment::step_cnt)
+      .def("step_eval", &Env::Environment::step_eval)
+      .def("set_action", &Env::Environment::set_action)
+      .def("get_frame_data", &Env::Environment::get_frame_data)
+      .def("get_next_act_agent", &Env::Environment::get_next_act_agent)
+      .def("step_once", &Env::Environment::step_once);
 
   py::class_<Env::GridMap>(env, "GridMap", py::buffer_protocol())
       .def_buffer([](Env::GridMap &m) -> py::buffer_info {
@@ -112,7 +123,8 @@ PYBIND11_MODULE(_core, env)
       .def_readonly("delta_time", &Env::Info::delta_time)
       .def_readonly("agent_exploration_rate", &Env::Info::agent_exploration_rate)
       .def_readonly("global_exploration_rate", &Env::Info::global_exploration_rate)
-      .def_readonly("agent_explored_pixels", &Env::Info::agent_explored_pixels);
+      .def_readonly("agent_explored_pixels", &Env::Info::agent_explored_pixels)
+      .def_readonly("tick", &Env::Info::tick);
 
   py::class_<Env::Reward>(env, "Reward")
       .def(py::init<>())

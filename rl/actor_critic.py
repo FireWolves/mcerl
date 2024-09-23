@@ -27,7 +27,7 @@ class Actor(nn.Module):
     def policy_network(self):
         return self._policy_network
 
-    def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+    def forward(self, frame_data: dict[str, Any], *, training=True) -> dict[str, Any]:
         frame_data = self._pre_forward(frame_data)
         pred = self._policy_network(
             frame_data["observation"]["graph"].x,
@@ -35,10 +35,13 @@ class Actor(nn.Module):
             frame_data["observation"]["graph"].batch,
         )
         probabilities = F.softmax(pred, dim=0)
-        if probabilities.numel() == 1:
-            action_index = torch.tensor([0], device=pred.device)
+        if not training:
+            action_index = torch.argmax(probabilities)
         else:
-            action_index = torch.multinomial(probabilities.squeeze(), 1)
+            if probabilities.numel() == 1:
+                action_index = torch.tensor([0], device=pred.device)
+            else:
+                action_index = torch.multinomial(probabilities.squeeze(), 1)
         log_prob = torch.log(probabilities[action_index])
         frame_data["action"] = action_index
         frame_data["log_prob"] = log_prob
@@ -143,10 +146,10 @@ class ActorCritic(nn.Module):
     def forward_critic(self, frame_data: dict[str, Any]) -> dict[str, Any]:
         return self._critic(frame_data)
 
-    def forward(self, frame_data: dict[str, Any]) -> dict[str, Any]:
+    def forward(self, frame_data: dict[str, Any], *, training=True) -> dict[str, Any]:
         frame_data = self._pre_forward(frame_data)
         if self._forward_actor:
-            frame_data = self._actor(frame_data)
+            frame_data = self._actor(frame_data, training=training)
         if self._forward_critic:
             frame_data = self._critic(frame_data)
         return frame_data
@@ -178,9 +181,7 @@ class GAE:
             next_value = rollout[i]["next"]["value"]
             next_done = rollout[i]["next"]["done"]
             delta = reward + self._gamma * next_value * (1.0 - next_done) - value
-            advantage = (
-                delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
-            )
+            advantage = delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
             rollout[i]["advantage"] = advantage
             rollout[i]["return"] = advantage + value
         return rollout

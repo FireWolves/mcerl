@@ -21,7 +21,7 @@ class Environment
 public:
   Environment(const std::string log_level, const std::string log_file);
 
-  FrameData step(int agent_id, Action target_index);
+  FrameData step(int agent_id, Action target_index, bool check_validation = true, bool set_action = true);
 
   FrameData reset(GridMap env_map, std::vector<Coord> poses, int num_agents, int max_steps, int max_steps_per_agent,
                   int velocity, int sensor_range, int num_rays, int min_frontier_pixel, int max_frontier_pixel,
@@ -32,6 +32,18 @@ public:
   GridMap env_map() const { return *env_map_; }
   GridMap global_map() const { return *global_map_; }
   GridMap agent_map(int agent_id) const { return *agents_[agent_id].state.map; }
+  std::vector<Coord> agent_path(int agent_id) const
+  {
+    return (agents_[agent_id].state.executing_path == nullptr)
+               ? (std::vector<Coord>{})
+               : (std::vector<Coord>{agents_[agent_id].state.executing_path->begin(),
+                                     agents_[agent_id].state.executing_path->end()});
+  }
+  Coord agent_pos(int agent_id) const { return agents_[agent_id].state.pos; }
+  Coord agent_target(int agent_id) const { return agents_[agent_id].action.target_pos; }
+  int agent_step_cnt(int agent_id) const { return agents_[agent_id].info.step_count; }
+  int tick() const { return tick_; }
+  int step_cnt() const { return step_count_; }
 
   /** some test function for pybind11 debugging **/
 
@@ -63,7 +75,13 @@ public:
     auto mat = cv::Mat(map.rows(), map.cols(), CV_8UC1, map.data());
     return mat.at<uint8_t>(coord);
   }
+  int step_eval();
+  void set_action(int agent_id, Action target_idx);
+  FrameData get_frame_data(int agent_id, bool check_validation);
+  int get_next_act_agent();
+  int step_once();
 
+  void reset_state() { step_count_ = 0, is_done_ = false, tick_ = 0; }
   void init(GridMap env_map, std::vector<Coord> poses, int num_agents, int max_steps, int max_steps_per_agent,
             int velocity, int sensor_range, int num_rays, int min_frontier_pixel, int max_frontier_pixel,
             float exploration_threshold);
@@ -89,13 +107,6 @@ private:
   int ray_cast_random_offs_min_;
   int ray_cast_random_offs_max_;
   int ray_cast_expand_pixels_;
-
-  void set_action(int agent_id, Action target_idx);
-  FrameData get_frame_data(int agent_id);
-  int get_next_act_agent();
-  int step_once();
-
-  void reset_state() { step_count_ = 0, is_done_ = false, tick_ = 0; }
 };
 
 } // namespace Env

@@ -74,7 +74,7 @@ def stack_trajectory(trajectory):
     return LazyStackedTensorDict.maybe_dense_stack([tensordict.TensorDict(frame_data) for frame_data in trajectory])
 
 
-def random_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
+def random_policy(frame_data: dict[str, Any], **kwargs) -> dict[str, Any]:
     """
     random policy for the agents
 

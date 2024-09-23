@@ -170,16 +170,20 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
                 int expand_pixels)
 {
   // we need to expand the pixels to avoid the ray cast error
-  sensor_range = std::max(0, sensor_range - expand_pixels);
 
+  sensor_range = std::max(0, sensor_range - expand_pixels);
+  spdlog::debug("Start map update, pos: ({}, {}), sensor_range: {}, num_rays: {}, expand_pixels: {}", pos.x, pos.y,
+                sensor_range, num_rays, expand_pixels);
   std::default_random_engine random_engine;
   std::uniform_real_distribution<float> random_offset;
 
+  spdlog::trace("Create cv::Mat for env_map and exploration_map");
   auto &&static_mat = cv::Mat(env_map->rows(), env_map->cols(), CV_8UC1, env_map->data());
 
   auto &&map_to_update = cv::Mat(exploration_map->rows(), exploration_map->cols(), CV_8UC1, exploration_map->data());
 
   /*** 计算需要进行光追的像素点 ***/
+  spdlog::trace("Calculate circle end points");
   std::vector<cv::Point> circle_end_points;
   for (int i = 0; i < num_rays; ++i)
   {
@@ -194,6 +198,7 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
     circle_end_points.push_back(ray_end_point);
   }
   /*** 计算光追碰撞 ***/
+  spdlog::trace("Calculate ray trace");
   std::vector<cv::Point> polygon(circle_end_points);
   for (int i = 0; i < circle_end_points.size(); i++)
   {
@@ -209,20 +214,25 @@ void map_update(std::shared_ptr<GridMap> env_map, GridMap *exploration_map, Coor
     }
   }
   /*** 计算多边形的最小外接矩形 ***/
+  spdlog::trace("Calculate bounding box");
   auto polygon_bbx = cv::boundingRect(polygon);
 
   /*** 计算多边形在最小外接矩形中的位置 ***/
-
+  spdlog::trace("Calculate polygon in bounding box");
   std::vector<cv::Point> polygon_in_roi(polygon.size());
   for (size_t i = 0; i < polygon.size(); ++i)
     polygon_in_roi[i] = polygon.at(i) - polygon_bbx.tl();
 
   /*** 计算多边形的ROI和需要填充的部分 ***/
+  spdlog::trace("Calculate ROI and fill mask");
   cv::Mat roi_mask(polygon_bbx.size(), CV_8UC1, cv::Scalar(0));
-
+  spdlog::trace("roi_mask: ({}, {}),count: {}", roi_mask.rows, roi_mask.cols, cv::countNonZero(roi_mask));
   cv::fillPoly(roi_mask, std::vector<std::vector<cv::Point>>{polygon_in_roi}, 255);
+  spdlog::trace("roi_mask filled, count: {}", cv::countNonZero(roi_mask));
 
+  spdlog::trace("Copy to map_to_update");
   cv::copyTo(static_mat(polygon_bbx), map_to_update(polygon_bbx), roi_mask);
+  spdlog::trace("Map updated");
 }
 
 std::vector<FrontierPoint> frontier_detection(Env::GridMap *exploration_map, int min_pixels, int max_pixels,
