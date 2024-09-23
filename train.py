@@ -33,8 +33,6 @@ from mcerl.utils import (
     reward_sum,
 )
 
-%matplotlib inline
-
 # %%
 # load map
 maps = []
@@ -145,7 +143,7 @@ max_exploration_gain = ray_range**2 * pi / 2.0
 #########################
 
 # gae权重
-lmbda = 0.97
+lmbda = 0.98
 
 # discount factor
 gamma = 0.96
@@ -160,19 +158,21 @@ x_star = 10
 sigma = 40
 
 # clip范围
-clip_coefficient = 0.15
+clip_coefficient = 0.2
 
 # 最大gradient范数
-max_grad_norm = 0.5
+max_grad_norm = 1.0
 
 # ESS
-entropy_weight = 0.005
+entropy_coefficient = 0.03
+
+entropy_coefficient_decay = 0.995
 
 # policy loss的权重
 policy_loss_weight = 1.0
 
 # value loss的权重
-value_loss_weight = 0.5
+value_loss_weight = 1.0
 
 # learning rate
 lr = 5e-4
@@ -193,10 +193,10 @@ n_frames_per_iter = 5000
 n_parallel_envs = 31
 
 # 每次训练的epoch数, 即数据要被训练多少次
-n_epochs_per_iter = 5
+n_epochs_per_iter = 8
 
 # 每次epoch的mini_batch大小
-n_frames_per_mini_batch = 500
+n_frames_per_mini_batch = 512
 
 # 每个agent的最大步数
 max_steps_per_agent = 40
@@ -204,7 +204,7 @@ max_steps_per_agent = 40
 # 每次训练所用到的总的环境数量
 # n_envs = round(n_frames_per_iter / num_agents / max_steps_per_agent)
 
-n_envs = 76
+n_envs = 100
 
 # 每个epoch的frame数
 n_frames_per_epoch = n_frames_per_iter
@@ -235,20 +235,18 @@ def env_transform(frame_data: dict[str, Any]) -> dict[str, Any]:
             float(x) / width,
             float(y) / height,
             float(gain) / max_exploration_gain,
-            np.tanh(float(distance) / float(ray_range)),
+            float(distance) / height,
         )
         for x, y, gain, distance in frame_data["observation"]["frontier_points"]
     ]
 
     # normalize position to [0,1]
     frame_data["observation"]["pos"] = [
-        (float(x) / width, float(y) / height)
-        for x, y in frame_data["observation"]["pos"]
+        (float(x) / width, float(y) / height) for x, y in frame_data["observation"]["pos"]
     ]
 
     frame_data["observation"]["target_pos"] = [
-        (float(x) / width, float(y) / height)
-        for x, y in frame_data["observation"]["target_pos"]
+        (float(x) / width, float(y) / height) for x, y in frame_data["observation"]["target_pos"]
     ]
 
     # build graph
@@ -258,25 +256,21 @@ def env_transform(frame_data: dict[str, Any]) -> dict[str, Any]:
 
 
 # policy transform
-def device_cast(
-    frame_data: dict[str, Any], device: torch.device | None = None
-) -> dict[str, Any]:
+def device_cast(frame_data: dict[str, Any], device: torch.device | None = None) -> dict[str, Any]:
     """
     cast data to device
     """
     device = torch.device("cuda") if device is None else device
     if "graph" in frame_data["observation"]:
-        frame_data["observation"]["graph"] = frame_data["observation"]["graph"].to(
-            device
-        )
+        frame_data["observation"]["graph"] = frame_data["observation"]["graph"].to(device)
 
     return frame_data
 
 # %%
 # define policy
 
-policy_network = GINPolicyNetwork(dim_feature=6, dim_h=32)
-value_network = GINValueNetwork(dim_feature=6, dim_h=32)
+policy_network = GINPolicyNetwork(dim_feature=6, dim_h=72)
+value_network = GINValueNetwork(dim_feature=6, dim_h=72)
 actor = Actor(policy_network=policy_network)
 critic = Critic(value_network=value_network)
 wrapped_actor_critic = ActorCritic(
@@ -306,21 +300,11 @@ rollout_parameters = {
     "min_frontier_pixel": min_frontier_size,
     "max_frontier_pixel": max_frontier_size,
     "exploration_threshold": exploration_threshold,
-    "return_maps": True,
+    "return_maps": False,
     "requires_grad": False,
 }
 console.print(rollout_parameters)
 
-# %%
-# single rollout
-# env = Env(
-#     log_level,
-#     cpp_env_log_path.as_posix(),
-# )
-# rollout_parameters["grid_map"] = random.choice(maps)
-# with torch.no_grad():
-#     single_rollouts = env.rollout(**rollout_parameters)
-# rollouts = single_rollouts
 
 # %%
 # parallel rollout
@@ -328,7 +312,10 @@ console.print(rollout_parameters)
 
 def rollout_env(env, params):
     """在给定的环境中执行rollout。"""
-    random_map = random.choice(maps)
+    random_index = random.choice(list(range(len(maps))))
+    # console.print(f"随机选择地图索引: {random_index}")
+    random_map = maps[random_index]
+
     params["grid_map"] = random_map
     return env.rollout(**params)
 
@@ -361,23 +348,6 @@ def parallel_rollout(envs, num_parallel_envs, rollout_params):
 envs = [Env(cpp_env_log_level, cpp_env_log_path=cpp_env_log_path.as_posix()) for i in range(n_envs)]
 len(envs)
 
-# %%
-# rollouts = []
-# for i in range(15):
-#     current_envs = 31 + i * 5
-#     envs = [Env(cpp_env_log_level, cpp_env_log_path=cpp_env_log_path.as_posix()) for _ in range(current_envs)]
-#     average_time = []
-#     for j in range(4):
-#         start_time = time.time()
-#         with torch.no_grad():
-#             parallel_rollout(
-#                 envs=envs,
-#                 num_parallel_envs=n_parallel_envs,
-#                 rollout_params=rollout_parameters,
-#             )
-#         end_time = time.time()
-#         average_time.append(end_time - start_time)
-#     print(f"第 {i+1} 次并行rollout,一共 {current_envs} 个环境, 耗时 {np.mean(average_time)} 秒")
 
 # %%
 # for logging
@@ -390,6 +360,7 @@ writer.add_text("parameters", str(parameters))
 console_logging_data = {}
 start_time = time.time()
 for _n_iter in range(n_iters):
+    ess_weight = entropy_coefficient * entropy_coefficient_decay**_n_iter
     # collect data
     iter_start_time = time.time()
     data_collection_start_time = time.time()
@@ -488,16 +459,17 @@ for _n_iter in range(n_iters):
             # get minibatch data and transform to tensor for training
 
             forward_start_time = time.time()
-            new_action, new_log_probs, new_values, entropy = wrapped_actor_critic.forward_parallel(
+            new_action, new_log_probs, new_values, entropies = wrapped_actor_critic.forward_parallel(
                 graphs, frame_indices
             )
             new_log_probs = new_log_probs.to(device).flatten()
             new_values = new_values.to(device).flatten()
+            entropies = entropies.to(device).flatten()
+
             forward_time = time.time() - forward_start_time
-
             data_prepare_time = time.time() - training_data_prepare_start_time
-
             loss_compute_start_time = time.time()
+
             # compute loss
             log_ratio = new_log_probs - prev_log_prob
             ratio = log_ratio.exp()
@@ -507,30 +479,27 @@ for _n_iter in range(n_iters):
                 approx_kl = ((ratio - 1) - log_ratio).mean()
                 clip_fraction += [((ratio - 1.0).abs() > clip_coefficient).float().mean().item()]
 
-            pg_loss1 = -advantages * ratio
-            pg_loss2 = -advantages * torch.clamp(ratio, 1 - clip_coefficient, 1 + clip_coefficient)
+            pg_loss1 = advantages * ratio
+            pg_loss2 = advantages * torch.clamp(ratio, 1 - clip_coefficient, 1 + clip_coefficient)
+            policy_loss = -torch.min(pg_loss1, pg_loss2).mean()
 
-            policy_loss = torch.max(pg_loss1, pg_loss2).mean()
+            ess_loss = -entropies.mean()
+
             value_loss = 0.5 * ((new_values - returns) ** 2).mean()
-            ess_loss = entropy.mean()
-            loss = policy_loss_weight * policy_loss + value_loss_weight * value_loss - entropy_weight * ess_loss
+
+            loss = policy_loss_weight * policy_loss + value_loss_weight * value_loss + ess_weight * ess_loss
+
             loss_compute_time = time.time() - loss_compute_start_time
 
+            ### optimizer update ###
             optimizer_start_time = time.time()
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(wrapped_actor_critic.parameters(), max_grad_norm)
             optimizer.step()
             optimizer_time = time.time() - optimizer_start_time
+
             mini_batch_time = time.time() - mini_batch_start_time
-            # console.print(
-            #     f"sampling time: {sample_time}",
-            #     f"forward time: {forward_time}",
-            #     f"data prepare time: {data_prepare_time}",
-            #     f"loss compute time: {loss_compute_time}",
-            #     f"optimizer time: {optimizer_time}",
-            #     f"mini batch time: {mini_batch_time}",
-            # )
 
         epoch_end_time = time.time() - epoch_start_time
         console_logging_data.update(
@@ -581,6 +550,7 @@ for _n_iter in range(n_iters):
             "exploration_rewards": exploration_rewards.item(),
             "time_step_rewards": time_step_rewards.item(),
             "total_rewards": total_rewards.item(),
+            "ess_weight": ess_weight,
         }
     )
     global_step = _n_iter
@@ -595,11 +565,11 @@ for _n_iter in range(n_iters):
     writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
     writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
     writer.add_scalar("losses/clip_fraction", np.mean(clip_fraction), global_step)
-    writer.add_scalar("info/average_episode_time", average_exploration_time, global_step)
-    writer.add_scalar("reward/episode_reward_mean", episode_reward_mean, global_step)
-    writer.add_scalar("reward/total_reward", total_rewards.item(), global_step)
-    writer.add_scalar("reward/exploration_rewards", exploration_rewards.item(), global_step)
-    writer.add_scalar("reward/time_step_rewards", time_step_rewards.item(), global_step)
+    writer.add_scalar("rewards/average_exploration_time", average_exploration_time, global_step)
+    writer.add_scalar("rewards/episode_reward_mean", episode_reward_mean, global_step)
+    writer.add_scalar("rewards/total_reward", total_rewards.item(), global_step)
+    writer.add_scalar("rewards/exploration_rewards", exploration_rewards.item(), global_step)
+    writer.add_scalar("rewards/time_step_rewards", time_step_rewards.item(), global_step)
 
     iter_time = time.time() - iter_start_time
     console_logging_data.update(
