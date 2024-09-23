@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Callable
 
 import torch
@@ -34,12 +35,10 @@ class Actor(nn.Module):
             frame_data["observation"]["graph"].edge_index,
             frame_data["observation"]["graph"].batch,
         )
-        probabilities = F.softmax(pred, dim=0)
-        if probabilities.numel() == 1:
-            action_index = torch.tensor([0], device=pred.device)
-        else:
-            action_index = torch.multinomial(probabilities.squeeze(), 1)
-        log_prob = torch.log(probabilities[action_index])
+        probabilities = F.softmax(pred, dim=0).reshape(-1)
+        dist = torch.distributions.Categorical(probabilities)
+        action_index = dist.sample()
+        log_prob = torch.log(probabilities.gather(0, action_index))
         frame_data["action"] = action_index
         frame_data["log_prob"] = log_prob
         return frame_data
@@ -47,24 +46,22 @@ class Actor(nn.Module):
     def forward_parallel(self, graph, batch):
         pred = self._policy_network(graph.x, graph.edge_index, graph.batch, masks=batch)
         batches = int(batch.max().item()) + 1
+        actions = []
+        log_probs = []
+        entropies = []
         for index in range(batches):
             mask = batch == index
-            probabilities = F.softmax(pred[mask], dim=0)
-            if probabilities.numel() == 1:
-                action_index = torch.tensor([0], device=pred.device)
-            else:
-                action_index = torch.multinomial(probabilities.squeeze(), 1)
-            log_prob = torch.log(probabilities[action_index])
-            entropy = torch.mean(probabilities * torch.log(probabilities + 1e-10)).reshape(-1)
-            if index == 0:
-                actions = action_index
-                log_probs = log_prob
-                entropies = entropy
-            else:
-                actions = torch.cat((actions, action_index))
-                log_probs = torch.cat((log_probs, log_prob))
-                entropies = torch.cat((entropies, entropy))
-
+            probabilities = F.softmax(pred[mask], dim=0).reshape(-1)
+            dist = torch.distributions.Categorical(probabilities)
+            action_index = dist.sample()
+            log_prob = torch.log(probabilities.gather(0, action_index))
+            entropy = dist.entropy()
+            actions.append(action_index)
+            log_probs.append(log_prob)
+            entropies.append(entropy)
+        actions = torch.stack(actions)
+        log_probs = torch.stack(log_probs)
+        entropies = torch.stack(entropies)
         return actions, log_probs, entropies
 
     __call__ = forward
@@ -178,9 +175,7 @@ class GAE:
             next_value = rollout[i]["next"]["value"]
             next_done = rollout[i]["next"]["done"]
             delta = reward + self._gamma * next_value * (1.0 - next_done) - value
-            advantage = (
-                delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
-            )
+            advantage = delta + self._gamma * self._lambda * (1.0 - next_done) * advantage
             rollout[i]["advantage"] = advantage
             rollout[i]["return"] = advantage + value
         return rollout

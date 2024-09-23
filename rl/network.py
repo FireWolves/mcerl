@@ -44,7 +44,7 @@ class GINPolicyNetwork(torch.nn.Module):
         # Existing GIN layers
         nn1 = Sequential(
             Linear(dim_feature, dim_h),
-            BatchNorm1d(dim_h),
+            # BatchNorm1d(dim_h),
             ReLU(),
             Linear(dim_h, dim_h),
             ReLU(),
@@ -52,7 +52,7 @@ class GINPolicyNetwork(torch.nn.Module):
         self.conv1 = GINConv(nn1)
         nn2 = Sequential(
             Linear(dim_h, dim_h),
-            BatchNorm1d(dim_h),
+            # BatchNorm1d(dim_h),
             ReLU(),
             Linear(dim_h, dim_h),
             ReLU(),
@@ -90,7 +90,7 @@ class GINPolicyNetwork(torch.nn.Module):
         h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
-        h = F.dropout(h, p=0.3, training=self.training)
+        h = F.dropout(h, p=0.1, training=self.training)
 
         return self.lin2(h)
 
@@ -102,7 +102,7 @@ class GINValueNetwork(torch.nn.Module):
         super().__init__()
         nn1 = Sequential(
             Linear(dim_feature, dim_h),
-            BatchNorm1d(dim_h),
+            # BatchNorm1d(dim_h),
             ReLU(),
             Linear(dim_h, dim_h),
             ReLU(),
@@ -110,7 +110,7 @@ class GINValueNetwork(torch.nn.Module):
         self.conv1 = GINConv(nn1)
         nn2 = Sequential(
             Linear(dim_h, dim_h),
-            BatchNorm1d(dim_h),
+            # BatchNorm1d(dim_h),
             ReLU(),
             Linear(dim_h, dim_h),
             ReLU(),
@@ -145,5 +145,5 @@ class GINValueNetwork(torch.nn.Module):
         h_transformed = torch.mean(h_transformed, dim=1)
         # Linear layers
         h = self.lin1(h_transformed).relu()
-        h = F.dropout(h, p=0.3, training=self.training)
+        h = F.dropout(h, p=0.1, training=self.training)
         return self.lin2(h)
