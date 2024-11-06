@@ -312,6 +312,10 @@ FrameData Environment::get_frame_data(int agent_id)
     {
       frontier.path = Alg::a_star(agent.state.map.get(), agent.state.pos, frontier.pos);
       frontier.distance = Alg::calculate_path_distance(frontier.path);
+
+      // calculate unexplored pixels around the frontier
+      frontier.unexplored_pixels = Alg::calculate_valid_unexplored_pixels(
+          global_map_, frontier.pos, sensor_range_, unit_circle_end_points_, ray_cast_expand_pixels_);
       valid_frontiers.push_back(frontier);
     }
   }

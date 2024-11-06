@@ -78,6 +78,11 @@ std::vector<cv::Point> calculate_circle_points_with_random_offset(const std::vec
   }
   return circle_end_points;
 }
+std::vector<cv::Point> calculate_circle_points(const std::vector<cv::Point2d> &unit_circles, Coord pos, int radius,
+                                               int rows, int cols)
+{
+  return calculate_circle_points_with_random_offset(unit_circles, pos, radius, 0, 0, rows, cols);
+}
 
 cv::Point expand_point(cv::Point point, int rows, int cols, cv::Point origin, int expand_pixel)
 {
@@ -356,11 +361,13 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
 {
   end = get_surrogate_target(end, tolerance_range, exploration_map);
   spdlog::debug("start: ({}, {}), end: ({}, {})", start.x, start.y, end.x, end.y);
+  spdlog::trace("Checking if target is reachable");
   if ((*exploration_map)(end.x, end.y) != FREE)
   {
     spdlog::warn("Target is not reachable");
     return {};
   }
+  spdlog::trace("Target is reachable");
   if (cv::norm(start - end) < tolerance_range)
   {
     spdlog::debug("direct path. ");
@@ -377,8 +384,11 @@ Path a_star(GridMap *exploration_map, Coord start, Coord end, int tolerance_rang
   Node start_node{start, nullptr};
   open_set.emplace(start_node);
   // 开始搜索
-  while (!open_set.empty())
+  int K = 0;
+  spdlog::trace("Start searching");
+  while (!open_set.empty() && K < 1e5)
   {
+    K++;
     // 选择f值最小的节点
     auto current_node_itr = std::min_element(open_set.begin(), open_set.end());
     // 将当前节点加入已访问节点
@@ -518,6 +528,30 @@ int calculate_path_distance(const Path &path)
     distance += dis(path[i], path[i + 1]);
   }
   return static_cast<int>(distance);
+}
+
+int calculate_valid_unexplored_pixels(std::shared_ptr<Env::GridMap> map, Coord coord, int ray_range,
+                                      const std::vector<cv::Point2d> &unit_circles, int expand_pixels)
+{
+  spdlog::debug("calculate_valid_unexplored_pixels");
+  auto &&mat = cv::Mat(map->rows(), map->cols(), CV_8UC1, map->data());
+
+  auto &&circle_endpoints = calculate_circle_points(unit_circles, coord, ray_range, map->rows(), map->cols());
+
+  auto &&end_points = ray_trace(mat, coord, circle_endpoints, expand_pixels);
+
+  auto &&polygon_bbx = cv::boundingRect(end_points);
+  std::vector<cv::Point> polygon_in_roi(end_points);
+  std::for_each(std::execution::par_unseq, polygon_in_roi.begin(), polygon_in_roi.end(),
+                [&polygon_bbx](auto &point) { point = point - polygon_bbx.tl(); });
+
+  auto &&roi_mask = cv::Mat(polygon_bbx.height, polygon_bbx.width, CV_8UC1, cv::Scalar(0));
+  cv::fillPoly(roi_mask, std::vector<std::vector<cv::Point>>{polygon_in_roi}, 255);
+
+  auto valid_pixels = cv::countNonZero((mat(polygon_bbx) == 127) & roi_mask);
+  spdlog::debug("valid pixels: {}", valid_pixels);
+
+  return valid_pixels;
 }
 
 } // namespace Alg
