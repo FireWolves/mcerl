@@ -97,6 +97,6 @@ template <> struct fmt::formatter<cv::Point>
 
   template <typename Context> auto format(const cv::Point &p, Context &ctx)
   {
-    return format_to(ctx.out(), "[{}, {}]", p.x, p.y);
+    return fmt::format_to(ctx.out(), "[{}, {}]", p.x, p.y);
   }
 };
