@@ -73,9 +73,7 @@ class Env:
         """
         self._logger = logging.getLogger()
         self._logger.debug("Creating pybind environment object")
-        self._env: mcerl.Environment = mcerl.Environment(
-            cpp_env_log_level, cpp_env_log_path
-        )
+        self._env: mcerl.Environment = mcerl.Environment(cpp_env_log_level, cpp_env_log_path)
         self._logger.debug("Pybind environment object created")
 
     @property
@@ -104,10 +102,12 @@ class Env:
         # Multithreading is not supported with requires_grad=True
         requires_grad = kwargs.pop("requires_grad", False)
         return_maps = kwargs.get("return_maps", None)
+        action_key = kwargs.get("action_key", "action")
         self._logger.debug(
-            "Start rollout with: require grad: %s, return maps: %s",
+            "Start rollout with: require grad: %s, return maps: %s, action key: %s",
             requires_grad,
             return_maps,
+            action_key,
         )
 
         if policy is None:
@@ -136,11 +136,7 @@ class Env:
             self._logger.debug("Stepping env")
             while True:
                 # if the agent is done, we set the action to 0 to wait other agent to finish
-                if (
-                    frame_data["done"]
-                    or len(frame_data["observation"]["frontier_points"]) == 0
-                    or self.done()
-                ):
+                if frame_data["done"] or len(frame_data["observation"]["frontier_points"]) == 0 or self.done():
                     self._logger.debug(
                         "Agent done: %s or frontier points empty: %s or env done: %s, setting dummy action 0",
                         self.get_done(frame_data),
@@ -160,8 +156,8 @@ class Env:
                 self._logger.debug("Frame data added")
 
                 # step the environment
-                self._logger.debug("Stepping cpp environment")
-                frame_data = self.step(frame_data, return_maps=self.return_maps)
+                self._logger.debug("Stepping cpp environment using action key: %s", action_key)
+                frame_data = self.step(frame_data, return_maps=self.return_maps, action_key=action_key)
                 self._logger.debug(
                     "Cpp env stepped, frame data got agent id: %s, num of frontiers: %s, agent done: %s, env done: %s",
                     self.get_agent_id(frame_data),
@@ -212,6 +208,7 @@ class Env:
         exploration_threshold: float = 0.95,
         return_maps: bool = False,
         env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        action_key: str = "action",
     ) -> dict[str, Any]:
         """
         Resets the environment to its initial state.
@@ -239,9 +236,7 @@ class Env:
         self.exploration_threshold: float = exploration_threshold
         self.return_maps: bool = return_maps
         self._last_data: dict[str, Any] | None = None
-        self.env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = (
-            env_transform
-        )
+        self.env_transform: Callable[[dict[str, Any]], dict[str, Any]] | None = env_transform
 
         if grid_map.ndim != 2:
             msg = "Expected 2D grid map"
@@ -280,6 +275,7 @@ class Env:
         frame_data: dict[str, Any],
         *,
         return_maps: bool = False,
+        action_key: str = "action",
     ) -> dict[str, Any]:
         """
         Performs a step in the environment until next agent.
@@ -293,7 +289,7 @@ class Env:
 
         """
         agent = frame_data["info"]["agent_id"]
-        action = frame_data["action"]
+        action = frame_data[action_key]
         data = self._env.step(agent, action)
         data = self.unwrap_data(data)
         curr_agent = data["info"]["agent_id"]
@@ -428,11 +424,7 @@ class Env:
             cols = grid_map.shape[1]
             for i in range(-radius, radius + 1):
                 for j in range(-radius, radius + 1):
-                    if (
-                        0 <= x + i < cols
-                        and 0 <= y + j < rows
-                        and grid_map[y + j, x + i] != valid_value
-                    ):
+                    if 0 <= x + i < cols and 0 <= y + j < rows and grid_map[y + j, x + i] != valid_value:
                         return False
             return True
 

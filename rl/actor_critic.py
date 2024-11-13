@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Any, Callable
 
 import torch
@@ -43,7 +42,7 @@ class Actor(nn.Module):
         frame_data["log_prob"] = log_prob
         return frame_data
 
-    def forward_parallel(self, graph, batch):
+    def forward_parallel(self, graph, batch, *, expert_actions=None):
         pred = self._policy_network(graph.x, graph.edge_index, graph.batch, masks=batch)
         batches = int(batch.max().item()) + 1
         actions = []
@@ -53,7 +52,7 @@ class Actor(nn.Module):
             mask = batch == index
             probabilities = F.softmax(pred[mask], dim=0).reshape(-1)
             dist = torch.distributions.Categorical(probabilities)
-            action_index = dist.sample()
+            action_index = dist.sample() if expert_actions is None else expert_actions[index]
             log_prob = torch.log(probabilities.gather(0, action_index))
             entropy = dist.entropy()
             actions.append(action_index)
@@ -98,13 +97,12 @@ class Critic(nn.Module):
         return frame_data
 
     def forward_parallel(self, graph, batch):
-        value = self._value_network(
+        return self._value_network(
             graph.x,
             graph.edge_index,
             graph.batch,
             masks=batch,
         )
-        return value
 
     __call__ = forward
 
@@ -153,8 +151,8 @@ class ActorCritic(nn.Module):
             frame_data = self._forward_preprocess(frame_data)
         return frame_data
 
-    def forward_parallel(self, graph, batch):
-        action_index, log_prob, entropy = self.actor.forward_parallel(graph, batch)
+    def forward_parallel(self, graph, batch, *, expert_actions=None):
+        action_index, log_prob, entropy = self.actor.forward_parallel(graph, batch, expert_actions=expert_actions)
         value = self.critic.forward_parallel(graph, batch)
         return action_index, log_prob, value, entropy
 

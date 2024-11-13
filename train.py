@@ -7,22 +7,20 @@ import datetime
 import logging
 import pathlib as pl
 import random
-import shutil
 import string
 import time
 from math import pi
 from typing import Any
 
-import cv2
 import numpy as np
 import torch
-from matplotlib import pyplot as plt
 from PIL import Image, ImageOps
 from rich.console import Console
 from rich.table import Table
 from rl.actor_critic import GAE, Actor, ActorCritic, Critic
 from rl.network import GINPolicyNetwork, GINValueNetwork
 from rl.utils import Sampler, to_graph
+from torch import Tensor
 from torch.optim.adam import Adam
 from torch.utils.tensorboard.writer import SummaryWriter
 
@@ -46,7 +44,7 @@ easy_maps = [
 hard_maps = ["map/hard/53.png", "map/40.png"]
 medium_maps = ["map/medium/12.png", "map/40.png", "map/medium/11.png"]
 
-map_height, map_width = 300, 200
+map_height, map_width = 200, 300
 
 for map_img in easy_maps + hard_maps + medium_maps:
     img = Image.open(map_img)
@@ -59,6 +57,7 @@ for map_img in easy_maps + hard_maps + medium_maps:
 
 # %%
 # define parameters
+
 #########################
 # log参数
 #########################
@@ -88,7 +87,7 @@ tensorboard_dir.mkdir(parents=True, exist_ok=True)
 
 # logger
 log_level = "warning"
-cpp_env_log_level = log_level
+cpp_env_log_level = "warning"
 py_env_log_level = log_level
 logger = logging.getLogger()
 logger.setLevel(py_env_log_level.upper())
@@ -135,7 +134,7 @@ exploration_threshold = 0.95
 
 
 # 一个frontier最多可以获得多少信息增益
-max_exploration_gain = ray_range**2 * pi / 2.0
+max_exploration_gain = ray_range**2 * pi
 
 
 #########################
@@ -185,18 +184,17 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # 总共训练的次数
 n_iters = 1000
+# n_iters = 10
 
-# 每次训练的frame数(大约)
-n_frames_per_iter = 5000
 
 # 每次训练的并行环境数(num worker)
-n_parallel_envs = 31
+n_parallel_envs = 96
 
 # 每次训练的epoch数, 即数据要被训练多少次
 n_epochs_per_iter = 8
 
 # 每次epoch的mini_batch大小
-n_frames_per_mini_batch = 512
+n_frames_per_mini_batch = 5120
 
 # 每个agent的最大步数
 max_steps_per_agent = 40
@@ -204,8 +202,10 @@ max_steps_per_agent = 40
 # 每次训练所用到的总的环境数量
 # n_envs = round(n_frames_per_iter / num_agents / max_steps_per_agent)
 
-n_envs = 100
-
+n_envs = 512
+n_eval_envs = 512
+# 每次训练的frame数(大约)
+n_frames_per_iter = max_steps_per_agent * num_agents * n_envs
 # 每个epoch的frame数
 n_frames_per_epoch = n_frames_per_iter
 
@@ -219,12 +219,50 @@ console.print(parameters)
 
 # %%
 # transform function
-# env_transform
+
+
+def expert_policy(frame_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    greedy policy
+    utility : u=(A-beta*D)*(0.85 if overlap else 1)
+    overlap: if the frontier point is close to the robot or close to robots' target
+    """
+    beta = 10
+    sensor_range = 30
+    discount_factor = 0.85
+    utilities = []
+    if len(frame_data["observation"]["frontier_points"]) == 0:
+        frame_data["expert_action"] = 0
+        return frame_data
+
+    for frontier in frame_data["observation"]["frontier_points"]:
+        pos = frontier[:2]
+        area = frontier[2]
+        distance = frontier[3]
+        utility = area - beta * distance
+        for pose in frame_data["observation"]["pos"][1:] + frame_data["observation"]["target_pos"][1:]:
+            distance = np.linalg.norm(np.array(pos) - np.array(pose))
+            if distance < sensor_range:
+                utility *= discount_factor
+                break
+        utilities.append(utility)
+    action_index = np.argmax(utilities)
+    # utilities = torch.tensor(utilities).float()
+    # with torch.no_grad():
+    #     probabilities = torch.nn.functional.softmax(utilities, dim=0).reshape(-1)
+    #     action_index = torch.argmax(probabilities)
+
+    frame_data["expert_action"] = action_index
+    return frame_data
+
+
+# %%
 def env_transform(frame_data: dict[str, Any]) -> dict[str, Any]:
     """
     normalize position, exploration gain,etc.
     Note that we need to check if env is done
     """
+    frame_data = expert_policy(frame_data)
 
     width = float(map_width)
     height = float(map_height)
@@ -260,11 +298,13 @@ def device_cast(frame_data: dict[str, Any], device: torch.device | None = None) 
     """
     cast data to device
     """
-    device = torch.device("cuda") if device is None else device
+    if device is None:
+        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     if "graph" in frame_data["observation"]:
         frame_data["observation"]["graph"] = frame_data["observation"]["graph"].to(device)
 
     return frame_data
+
 
 # %%
 # define policy
@@ -273,12 +313,10 @@ policy_network = GINPolicyNetwork(dim_feature=6, dim_h=72)
 value_network = GINValueNetwork(dim_feature=6, dim_h=72)
 actor = Actor(policy_network=policy_network)
 critic = Critic(value_network=value_network)
-wrapped_actor_critic = ActorCritic(
-    actor=actor, critic=critic, forward_preprocess=device_cast
-)
+wrapped_actor_critic = ActorCritic(actor=actor, critic=critic, forward_preprocess=device_cast)
 wrapped_actor_critic = wrapped_actor_critic.to(device)
 value_estimator = GAE(gamma=gamma, lmbda=lmbda)
-optimizer = Adam(wrapped_actor_critic.parameters(),lr=lr)
+optimizer = Adam(wrapped_actor_critic.parameters(), lr=lr)
 
 # %%
 # load state dict
@@ -286,7 +324,6 @@ optimizer = Adam(wrapped_actor_critic.parameters(),lr=lr)
 
 # %%
 # parameters for env rollout
-
 rollout_parameters = {
     "policy": wrapped_actor_critic,
     "env_transform": env_transform,
@@ -302,9 +339,25 @@ rollout_parameters = {
     "exploration_threshold": exploration_threshold,
     "return_maps": False,
     "requires_grad": False,
+    "action_key": "expert_action",
 }
 console.print(rollout_parameters)
 
+# %%
+env = Env(
+    cpp_env_log_level,
+    cpp_env_log_path.as_posix(),
+)
+rollout_parameters["grid_map"] = random.choice(maps)
+
+# %%
+# plt.imshow(rollout_parameters["grid_map"])
+
+# %%
+# single rollout
+# with torch.no_grad():
+#     single_rollouts = env.rollout(**rollout_parameters)
+# rollouts = single_rollouts
 
 # %%
 # parallel rollout
@@ -340,7 +393,7 @@ def parallel_rollout(envs, num_parallel_envs, rollout_params):
                 result = future.result()
                 results.extend(result)
             except Exception as e:
-                print(f"环境 {futures[future]} 的rollout执行时发生错误: {e}")
+                print(f"环境 {futures[future]} 的rollout执行时发生错误: {e}")  # noqa: T201
 
     return results
 
@@ -348,43 +401,227 @@ def parallel_rollout(envs, num_parallel_envs, rollout_params):
 envs = [Env(cpp_env_log_level, cpp_env_log_path=cpp_env_log_path.as_posix()) for i in range(n_envs)]
 len(envs)
 
+# %%
+# parallel rollout
+# with torch.no_grad():
+#     rollouts=parallel_rollout(
+#         envs=envs,
+#         num_parallel_envs=n_parallel_envs,
+#         rollout_params=rollout_parameters,
+# )
+# len(rollouts)
 
 # %%
 # for logging
 writer = SummaryWriter(tensorboard_dir / "ppo")
 writer.add_text("parameters", str(parameters))
+logging_data = {}
+
 
 # %%
-# train loop
+def compute_loss(
+    new_log_probs: Tensor,
+    old_log_probs: Tensor,
+    advantages: Tensor,
+    entropies: Tensor,
+    returns: Tensor,
+    new_values: Tensor,
+):
+    """
+    global_step
+    policy_loss_weight
+    value_loss_weight
+    ess_weight
+    """
+    loss_compute_start_time = time.time()
+    log_ratio = new_log_probs - old_log_probs
+    ratio = log_ratio.exp()
 
-console_logging_data = {}
-start_time = time.time()
-for _n_iter in range(n_iters):
-    ess_weight = entropy_coefficient * entropy_coefficient_decay**_n_iter
-    # collect data
-    iter_start_time = time.time()
-    data_collection_start_time = time.time()
     with torch.no_grad():
-        env_rollout_start_time = time.time()
-        rollouts = parallel_rollout(
-            envs=envs,
-            num_parallel_envs=n_parallel_envs,
-            rollout_params=rollout_parameters,
-        )
-        env_rollout_time = time.time() - env_rollout_start_time
+        old_approx_kl = (-log_ratio).mean()
+        approx_kl = ((ratio - 1) - log_ratio).mean()
+        clip_fraction = [((ratio - 1.0).abs() > clip_coefficient).float().mean().item()]
 
-        data_post_process_start_time = time.time()
+    pg_loss1 = advantages * ratio
+    pg_loss2 = advantages * torch.clamp(ratio, 1 - clip_coefficient, 1 + clip_coefficient)
+    policy_loss = -torch.min(pg_loss1, pg_loss2).mean()
+
+    ess_loss = -entropies.mean()
+
+    value_loss = 0.5 * ((new_values - returns) ** 2).mean()
+
+    loss = policy_loss_weight * policy_loss + value_loss_weight * value_loss + ess_weight * ess_loss
+    loss_compute_time = time.time() - loss_compute_start_time
+
+    logging_data.update(
+        {
+            "old_approx_kl": old_approx_kl.item(),
+            "approx_kl": approx_kl.item(),
+            "clip_fraction": np.mean(clip_fraction),
+            "loss": loss.item(),
+            "loss_compute_time": loss_compute_time,
+        }
+    )
+    global global_step  # noqa: PLW0602
+    writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+    writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+    writer.add_scalar("losses/loss", loss.item(), global_step)
+    writer.add_scalar("losses/clip_fraction", np.mean(clip_fraction).item(), global_step)
+
+    return loss
+
+
+# %%
+def train_ppo_minibatch(mini_batch_data: dict[str, Any]):
+    mini_batch_start_time = time.time()
+
+    # prepare data
+    graphs = mini_batch_data["graphs"].to(device)
+    advantages = mini_batch_data["advantages"].to(device).flatten()
+    prev_log_prob = mini_batch_data["log_probs"].to(device).flatten()
+    frame_indices = mini_batch_data["frame_indices"].to(device)
+    returns = mini_batch_data["returns"].to(device).flatten()
+
+    # parallel forward
+    forward_start_time = time.time()
+
+    new_action, new_log_probs, new_values, entropies = wrapped_actor_critic.forward_parallel(graphs, frame_indices)
+
+    new_log_probs = new_log_probs.to(device).flatten()
+    new_values = new_values.to(device).flatten()
+    entropies = entropies.to(device).flatten()
+    forward_time = time.time() - forward_start_time
+
+    # compute loss
+    loss = compute_loss(
+        new_log_probs,
+        prev_log_prob,
+        advantages,
+        entropies,
+        returns,
+        new_values,
+    )
+
+    # optimizer update
+    optimizer_start_time = time.time()
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(wrapped_actor_critic.parameters(), max_grad_norm)
+    optimizer.step()
+    optimizer_time = time.time() - optimizer_start_time
+
+    mini_batch_time = time.time() - mini_batch_start_time
+
+    logging_data.update(
+        {
+            "optimizer_time": optimizer_time,
+            "forward_time": forward_time,
+            "mini_batch_time": mini_batch_time,
+        }
+    )
+
+
+# %%
+def print_data(logging_data):
+    table = Table(title=f"PPO Training on {device}: {n_envs} envs in {n_parallel_envs} threads")
+    table.add_column("Key", justify="left")
+    table.add_column("Value", justify="left")
+    for k, v in logging_data.items():
+        table.add_row(k, str(v)[:16])
+    console.print(table)
+
+
+# %%
+def train_bc_minibatch(mini_batch_data: dict[str, Any]):
+    mini_batch_start_time = time.time()
+
+    # prepare data
+    graphs = mini_batch_data["graphs"].to(device)
+    frame_indices = mini_batch_data["frame_indices"].to(device)
+    returns = mini_batch_data["returns"].to(device).flatten()
+    expert_actions = mini_batch_data["expert_actions"].to(device).flatten()
+
+    # parallel forward
+    forward_start_time = time.time()
+
+    new_action, new_log_probs, new_values, entropies = wrapped_actor_critic.forward_parallel(
+        graphs, frame_indices, expert_actions=expert_actions
+    )
+
+    new_log_probs = new_log_probs.to(device).flatten()
+    new_values = new_values.to(device).flatten()
+    entropies = entropies.to(device).flatten()
+    forward_time = time.time() - forward_start_time
+    bc_loss = torch.mean(-new_log_probs)
+    value_loss = 0.5 * ((new_values - returns) ** 2).mean()
+
+    loss = bc_loss + value_loss_weight * value_loss
+
+    # optimizer update
+    optimizer_start_time = time.time()
+    optimizer.zero_grad()
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(wrapped_actor_critic.parameters(), max_grad_norm)
+    optimizer.step()
+    optimizer_time = time.time() - optimizer_start_time
+
+    mini_batch_time = time.time() - mini_batch_start_time
+
+    logging_data.update(
+        {
+            "optimizer_time": optimizer_time,
+            "forward_time": forward_time,
+            "mini_batch_time": mini_batch_time,
+            "bc_loss": bc_loss.item(),
+            "value_loss": value_loss.item(),
+            "loss": loss.item(),
+        }
+    )
+
+
+# %%
+def train_epoch(sampler, n_mini_batches_per_epoch):
+    epoch_start_time = time.time()
+    # sample data
+    sample_start_time = time.time()
+    mini_batch_data = sampler.random_sample()
+    sample_time = time.time() - sample_start_time
+
+    # train minibatch
+    for _n_mini_batch in range(n_mini_batches_per_epoch):
+        if bc_finished_flag:
+            train_ppo_minibatch(mini_batch_data)
+        else:
+            train_bc_minibatch(mini_batch_data)
+
+    epoch_end_time = time.time() - epoch_start_time
+
+    logging_data.update(
+        {
+            "sample_time": sample_time,
+            "epoch_time": epoch_end_time,
+        }
+    )
+
+
+# %%
+def data_post_process(rollouts):
+    data_post_process_start_time = time.time()
+    with torch.no_grad():
         # normalize rewards
         rollouts = [exploration_reward_rescale(rollout, a=average_val, b=stddev_val) for rollout in rollouts]
         rollouts = [delta_time_reward_standardize(rollout, b=b, sigma=sigma, x_star=x_star) for rollout in rollouts]
-
         rollouts = [reward_sum(rollout, gamma=gamma) for rollout in rollouts]
-        data_post_process_time = time.time() - data_post_process_start_time
 
-        gae_start_time = time.time()
         # compute GAE
+        gae_start_time = time.time()
         rollouts = [value_estimator(rollout) for rollout in rollouts]
+        gae_time = time.time() - gae_start_time
+
+        # flatten rollouts
         flattened_rollouts = [frame_data for rollout in rollouts for frame_data in rollout]
+
+        # compute rewards
         exploration_rewards = np.mean(
             [frame_data["next"]["reward"]["exploration_reward"] for frame_data in flattened_rollouts]
         )
@@ -392,11 +629,8 @@ for _n_iter in range(n_iters):
             [frame_data["next"]["reward"]["time_step_reward"] for frame_data in flattened_rollouts]
         )
         total_rewards = np.mean([frame_data["next"]["reward"]["total_reward"] for frame_data in flattened_rollouts])
-        actual_frames_per_iter = len(flattened_rollouts)
-        gae_time = time.time() - gae_start_time
-        # add to sampler
-        data_flatten_start_time = time.time()
 
+        # convert to tensor
         graphs = []
         rewards = []
         values = []
@@ -404,7 +638,7 @@ for _n_iter in range(n_iters):
         log_probs = []
         returns = []
         total_times = []
-
+        expert_actions = []
         for frame_data in flattened_rollouts:
             graphs.append(frame_data["observation"]["graph"])
             rewards.append(frame_data["next"]["reward"]["total_reward"])
@@ -413,15 +647,19 @@ for _n_iter in range(n_iters):
             log_probs.append(frame_data["log_prob"])
             returns.append(frame_data["return"])
             total_times.append(frame_data["info"]["total_time_step"])
+            expert_actions.append(frame_data["expert_action"])
         rewards = torch.tensor(rewards).to(device)
         values = torch.tensor(values).to(device)
         advantages = torch.tensor(advantages).to(device)
         log_probs = torch.tensor(log_probs).to(device)
         returns = torch.tensor(returns).to(device)
         total_times = torch.tensor(total_times).to(device)
+        expert_actions = torch.tensor(expert_actions).to(device)
 
+        # add to sampler
         sampler = Sampler(
             batch_size=n_frames_per_mini_batch,
+            # batch_size=20,  # [DEBUG]
             length=len(flattened_rollouts),
             graphs=graphs,
             rewards=rewards,
@@ -429,154 +667,198 @@ for _n_iter in range(n_iters):
             advantages=advantages,
             log_probs=log_probs,
             returns=returns,
+            expert_actions=expert_actions,
             total_times=total_times,
         )
-        data_flatten_time = time.time() - data_flatten_start_time
-    data_collection_time = time.time() - data_collection_start_time
-
-    training_start_time = time.time()
-    clip_fraction = []
-    for _n_epoch in range(n_epochs_per_iter):
-        epoch_start_time = time.time()
-        n_mini_batches_per_epoch = actual_frames_per_iter // n_frames_per_mini_batch
-        for _n_mini_batch in range(n_mini_batches_per_epoch):
-            mini_batch_start_time = time.time()
-
-            sample_start_time = time.time()
-            # sample data
-            mini_batch_data = sampler.random_sample()
-            graphs = mini_batch_data["graphs"].to(device)
-            rewards = mini_batch_data["rewards"]
-            values = mini_batch_data["values"].to(device).flatten()
-            advantages = mini_batch_data["advantages"].to(device).flatten()
-            prev_log_prob = mini_batch_data["log_probs"].to(device).flatten()
-            returns = mini_batch_data["returns"].to(device).flatten()
-            total_times = mini_batch_data["total_times"]
-            frame_indices = mini_batch_data["frame_indices"].to(device)
-            sample_time = time.time() - sample_start_time
-
-            training_data_prepare_start_time = time.time()
-            # get minibatch data and transform to tensor for training
-
-            forward_start_time = time.time()
-            new_action, new_log_probs, new_values, entropies = wrapped_actor_critic.forward_parallel(
-                graphs, frame_indices
-            )
-            new_log_probs = new_log_probs.to(device).flatten()
-            new_values = new_values.to(device).flatten()
-            entropies = entropies.to(device).flatten()
-
-            forward_time = time.time() - forward_start_time
-            data_prepare_time = time.time() - training_data_prepare_start_time
-            loss_compute_start_time = time.time()
-
-            # compute loss
-            log_ratio = new_log_probs - prev_log_prob
-            ratio = log_ratio.exp()
-
-            with torch.no_grad():
-                old_approx_kl = (-log_ratio).mean()
-                approx_kl = ((ratio - 1) - log_ratio).mean()
-                clip_fraction += [((ratio - 1.0).abs() > clip_coefficient).float().mean().item()]
-
-            pg_loss1 = advantages * ratio
-            pg_loss2 = advantages * torch.clamp(ratio, 1 - clip_coefficient, 1 + clip_coefficient)
-            policy_loss = -torch.min(pg_loss1, pg_loss2).mean()
-
-            ess_loss = -entropies.mean()
-
-            value_loss = 0.5 * ((new_values - returns) ** 2).mean()
-
-            loss = policy_loss_weight * policy_loss + value_loss_weight * value_loss + ess_weight * ess_loss
-
-            loss_compute_time = time.time() - loss_compute_start_time
-
-            ### optimizer update ###
-            optimizer_start_time = time.time()
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(wrapped_actor_critic.parameters(), max_grad_norm)
-            optimizer.step()
-            optimizer_time = time.time() - optimizer_start_time
-
-            mini_batch_time = time.time() - mini_batch_start_time
-
-        epoch_end_time = time.time() - epoch_start_time
-        console_logging_data.update(
-            {
-                "policy_loss": policy_loss.item(),
-                "value_loss": value_loss.item(),
-                "ESS": ess_loss.item(),
-                "old_approx_kl": old_approx_kl.item(),
-                "approx_kl": approx_kl.item(),
-                "clip_fraction": np.mean(clip_fraction),
-                "loss": loss.item(),
-                "loss_compute_time": loss_compute_time,
-                "optimizer_time": optimizer_time,
-                "sample_time": sample_time,
-                "forward_time": forward_time,
-                "data_prepare_time": data_prepare_time,
-                "mini_batch_time": mini_batch_time,
-                "data_collection_time": data_collection_time,
-                "env_rollout_time": env_rollout_time,
-                "data_post_process_time": data_post_process_time,
-                "gae_time": gae_time,
-                "mini_batch_size": f"{n_mini_batches_per_epoch}/{n_frames_per_mini_batch}",
-                "n_iter": f"{_n_iter+1}/{n_iters}",
-                "n_epoch": f"{_n_epoch+1}/{n_epochs_per_iter}",
-                "frames_per_iter": f"{actual_frames_per_iter}/{n_frames_per_iter}",
-                "epoch_time": epoch_end_time,
-                "data_flatten_time": data_flatten_time,
-            }
-        )
-        table = Table(title=f"PPO Training: {n_envs} envs in {n_parallel_envs} threads")
-        table.add_column("Key", justify="left")
-        table.add_column("Value", justify="left")
-        for k, v in console_logging_data.items():
-            table.add_row(k, str(v)[:16])
-        console.print(table)
-
-    training_time_per_itr = time.time() - training_start_time
-
-    average_exploration_time = torch.mean(total_times.to(torch.float)).item()
+    data_post_process_time = time.time() - data_post_process_start_time
     episode_reward_mean = torch.mean(returns).item()
+    average_exploration_time = torch.mean(total_times.to(torch.float)).item()
 
-    console_logging_data.update(
+    logging_data.update(
         {
-            "training_time_per_itr": training_time_per_itr,
-            "average_exploration_time": average_exploration_time,
-            "episode_reward_mean": episode_reward_mean,
-            "total_training_time": time.time() - start_time,
             "exploration_rewards": exploration_rewards.item(),
             "time_step_rewards": time_step_rewards.item(),
             "total_rewards": total_rewards.item(),
-            "ess_weight": ess_weight,
+            "data_post_process_time": data_post_process_time,
+            "gae_time": gae_time,
+            "average_exploration_time": average_exploration_time,
+            "episode_reward_mean": episode_reward_mean,
         }
     )
-    global_step = _n_iter
-    if global_step % 10 == 0 and global_step > 0:
+    writer.add_scalar("rewards/exploration_rewards", exploration_rewards, global_step)
+    writer.add_scalar("rewards/time_step_rewards", time_step_rewards, global_step)
+    writer.add_scalar("rewards/total_rewards", total_rewards, global_step)
+    writer.add_scalar("rewards/average_exploration_time", average_exploration_time, global_step)
+    writer.add_scalar("rewards/episode_reward_mean", episode_reward_mean, global_step)
+
+    return sampler
+
+
+# %%
+def train(rollouts):
+    with torch.no_grad():
+        sampler = data_post_process(rollouts)
+        actual_frames_per_iter = sampler._length
+        n_mini_batches_per_epoch = actual_frames_per_iter // n_frames_per_mini_batch
+        # n_mini_batches_per_epoch = 1  # [DEBUG]
+
+    for _n_epoch in range(n_epochs_per_iter):
+        train_epoch(sampler, n_mini_batches_per_epoch)
+    logging_data.update(
+        {
+            "actual_frames_per_iter": sampler._length,
+            "n_mini_batches_per_epoch": n_mini_batches_per_epoch,
+        }
+    )
+    print_data(logging_data)
+
+
+# %%
+def evaluate(n_eval_envs):
+    rollout_parameters["action_key"] = "action"
+
+    # neural network policy
+    with torch.no_grad():
+        rollouts = parallel_rollout(
+            envs=envs[:n_eval_envs],
+            num_parallel_envs=n_parallel_envs,
+            rollout_params=rollout_parameters,
+        )
+        # normalize rewards
+        rollouts = [exploration_reward_rescale(rollout, a=average_val, b=stddev_val) for rollout in rollouts]
+        rollouts = [delta_time_reward_standardize(rollout, b=b, sigma=sigma, x_star=x_star) for rollout in rollouts]
+        rollouts = [reward_sum(rollout, gamma=gamma) for rollout in rollouts]
+
+        # compute GAE
+        rollouts = [value_estimator(rollout) for rollout in rollouts]
+
+        # flatten rollouts
+        flattened_rollouts = [frame_data for rollout in rollouts for frame_data in rollout]
+
+        # compute rewards
+        nn_exploration_rewards = np.mean(
+            [frame_data["next"]["reward"]["exploration_reward"] for frame_data in flattened_rollouts]
+        )
+        nn_time_step_rewards = np.mean(
+            [frame_data["next"]["reward"]["time_step_reward"] for frame_data in flattened_rollouts]
+        )
+        nn_total_rewards = np.mean([frame_data["next"]["reward"]["total_reward"] for frame_data in flattened_rollouts])
+        nn_total_times = np.mean([frame_data["info"]["total_time_step"] for frame_data in flattened_rollouts])
+        nn_returns = np.mean([frame_data["return"] for frame_data in flattened_rollouts])
+
+    # expert policy
+    rollout_parameters["action_key"] = "expert_action"
+    with torch.no_grad():
+        rollouts = parallel_rollout(
+            envs=envs[:n_eval_envs],
+            num_parallel_envs=n_parallel_envs,
+            rollout_params=rollout_parameters,
+        )
+        # normalize rewards
+        rollouts = [exploration_reward_rescale(rollout, a=average_val, b=stddev_val) for rollout in rollouts]
+        rollouts = [delta_time_reward_standardize(rollout, b=b, sigma=sigma, x_star=x_star) for rollout in rollouts]
+        rollouts = [reward_sum(rollout, gamma=gamma) for rollout in rollouts]
+
+        # compute GAE
+        rollouts = [value_estimator(rollout) for rollout in rollouts]
+
+        # flatten rollouts
+        flattened_rollouts = [frame_data for rollout in rollouts for frame_data in rollout]
+
+        # compute rewards
+        expert_exploration_rewards = np.mean(
+            [frame_data["next"]["reward"]["exploration_reward"] for frame_data in flattened_rollouts]
+        )
+        expert_time_step_rewards = np.mean(
+            [frame_data["next"]["reward"]["time_step_reward"] for frame_data in flattened_rollouts]
+        )
+        expert_total_rewards = np.mean(
+            [frame_data["next"]["reward"]["total_reward"] for frame_data in flattened_rollouts]
+        )
+        expert_total_times = np.mean([frame_data["info"]["total_time_step"] for frame_data in flattened_rollouts])
+        expert_returns = np.mean([frame_data["return"] for frame_data in flattened_rollouts])
+
+    bc_finished_flag = nn_total_times < expert_total_times * 0.8
+
+    global logging_data  # noqa: PLW0603
+
+    logging_data = {}
+
+    logging_data.update(
+        {
+            "mode": "eval",
+            "nn_exploration_rewards": nn_exploration_rewards,
+            "nn_time_step_rewards": nn_time_step_rewards,
+            "nn_total_rewards": nn_total_rewards,
+            "nn_total_times": nn_total_times,
+            "nn_returns": nn_returns,
+            "expert_exploration_rewards": expert_exploration_rewards,
+            "expert_time_step_rewards": expert_time_step_rewards,
+            "expert_total_rewards": expert_total_rewards,
+            "expert_total_times": expert_total_times,
+            "expert_returns": expert_returns,
+            "bc_finished": bc_finished_flag,
+        }
+    )
+    writer.add_scalar("eval/nn_exploration_rewards", nn_exploration_rewards, global_step)
+    writer.add_scalar("eval/nn_time_step_rewards", nn_time_step_rewards, global_step)
+    writer.add_scalar("eval/nn_total_rewards", nn_total_rewards, global_step)
+    writer.add_scalar("eval/nn_total_times", nn_total_times, global_step)
+    writer.add_scalar("eval/nn_returns", nn_returns, global_step)
+    writer.add_scalar("eval/expert_exploration_rewards", expert_exploration_rewards, global_step)
+    writer.add_scalar("eval/expert_time_step_rewards", expert_time_step_rewards, global_step)
+    writer.add_scalar("eval/expert_total_rewards", expert_total_rewards, global_step)
+    writer.add_scalar("eval/expert_total_times", expert_total_times, global_step)
+    writer.add_scalar("eval/expert_returns", expert_returns, global_step)
+    writer.add_scalar("eval/bc_finished", bc_finished_flag, global_step)
+
+    return bc_finished_flag
+
+
+# %%
+start_time = time.time()
+bc_finished_flag = False
+rollout_parameters["action_key"] = "expert_action"
+for global_step in range(n_iters):
+    logging_data.update({"mode": "training"})
+    iter_start_time = time.time()
+    ess_weight = entropy_coefficient * entropy_coefficient_decay**global_step
+    # collect data
+    env_rollout_start_time = time.time()
+    with torch.no_grad():
+        rollouts = parallel_rollout(
+            envs=envs,
+            num_parallel_envs=n_parallel_envs,
+            rollout_params=rollout_parameters,
+        )
+    # rollouts = rollouts # [DEBUG]
+    env_rollout_time = time.time() - env_rollout_start_time
+
+    itr_training_start_time = time.time()
+    train(rollouts)
+    training_time_per_itr = time.time() - itr_training_start_time
+    logging_data.update(
+        {
+            "itr_training_time": training_time_per_itr,
+            "total_training_time": time.time() - start_time,
+            "itr_time": time.time() - iter_start_time,
+            "n_iter": global_step,
+            "stage": "ppo" if bc_finished_flag else "bootstrap",
+        }
+    )
+
+    if global_step % 2 == 0 and global_step > 0:
         torch.save(
             wrapped_actor_critic.state_dict(),
             model_dir / f"ppo_parallel_{global_step}.pt",
         )
-    writer.add_scalar("losses/value_loss", value_loss.item(), global_step)
-    writer.add_scalar("losses/policy_loss", policy_loss.item(), global_step)
-    writer.add_scalar("losses/ESS", ess_loss.item(), global_step)
-    writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-    writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-    writer.add_scalar("losses/clip_fraction", np.mean(clip_fraction), global_step)
-    writer.add_scalar("rewards/average_exploration_time", average_exploration_time, global_step)
-    writer.add_scalar("rewards/episode_reward_mean", episode_reward_mean, global_step)
-    writer.add_scalar("rewards/total_reward", total_rewards.item(), global_step)
-    writer.add_scalar("rewards/exploration_rewards", exploration_rewards.item(), global_step)
-    writer.add_scalar("rewards/time_step_rewards", time_step_rewards.item(), global_step)
-
-    iter_time = time.time() - iter_start_time
-    console_logging_data.update(
-        {
-            "iter_time": iter_time,
-        }
-    )
+        # evaluate
+        bc_finished_flag = evaluate(n_eval_envs=n_eval_envs)
+        if bc_finished_flag:
+            rollout_parameters["action_key"] = "action"
+        else:
+            rollout_parameters["action_key"] = "expert_action"
+        print_data(logging_data)
 
 
 torch.save(wrapped_actor_critic.state_dict(), model_dir / f"actor_critic_{global_step}.pt")

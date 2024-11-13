@@ -131,3 +131,4 @@ def check_dict_struct(d: dict[str, Any], prefix: str = "") -> list:
         else:
             flattened_keys.append(prefix + k)
     return flattened_keys
+
